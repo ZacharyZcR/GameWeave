@@ -14,6 +14,7 @@ export type { PrefabDefinition } from "./prefab.js";
 export { definePlugin } from "./plugin.js";
 export type { GamePlugin } from "./plugin.js";
 export { SeededRandom } from "./random.js";
+export { createNoise2D, type Noise2D } from "./noise.js";
 export { defineResource, Resources } from "./resources.js";
 export type { ResourceDefinition } from "./resources.js";
 export { Scheduler } from "./scheduler.js";

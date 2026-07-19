@@ -7,10 +7,13 @@ import {
 } from "@gameweave/core";
 import {
   AnimationMixer,
+  BufferAttribute,
+  BufferGeometry,
   Group,
   LoopOnce,
   LoopRepeat,
   Mesh,
+  MeshStandardMaterial,
   Object3D,
   ObjectLoader,
   PerspectiveCamera,
@@ -18,6 +21,7 @@ import {
   WebGLRenderer,
   type AnimationAction,
   type AnimationClip,
+  type Material,
   type WebGLRendererParameters,
 } from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
@@ -52,6 +56,31 @@ export const Renderable = defineComponent<RenderableData>("renderable", {
 
 export const ManualTransform = defineComponent("manualTransform", {
   defaults: { enabled: true },
+});
+
+export interface DynamicMeshData extends Record<string, unknown> {
+  version: number;
+  positions: Float32Array;
+  normals: Float32Array;
+  uvs: Float32Array;
+  colors: Float32Array;
+  indices: Uint32Array;
+  material: string;
+}
+
+// 运行时生成/重建的几何（体素区块、程序化地形、破坏变形）。
+// 几何数据 runtimeOnly：从游戏数据重建，不进存档。改完数据递增 version 提交。
+export const DynamicMesh = defineComponent<DynamicMeshData>("dynamicMesh", {
+  defaults: () => ({
+    version: 0,
+    positions: new Float32Array(0),
+    normals: new Float32Array(0),
+    uvs: new Float32Array(0),
+    colors: new Float32Array(0),
+    indices: new Uint32Array(0),
+    material: "",
+  }),
+  runtimeOnly: true,
 });
 
 // 动画意图：可序列化、可 inspect。表现由 adapter 的 AnimationMixer 驱动。
@@ -98,6 +127,9 @@ export class ThreeAdapter {
   #sharedGeometry = new WeakSet<Object3D>();
   #synced = new Map<EntityId, TransformData>();
   #animations = new Map<EntityId, AnimationState>();
+  #materials = new Map<string, Material>();
+  #defaultMaterial: Material | undefined;
+  #meshVersions = new Map<EntityId, number>();
 
   constructor(options: ThreeAdapterOptions = {}) {
     this.scene = options.scene ?? new Scene();
@@ -160,6 +192,12 @@ export class ThreeAdapter {
     return (this.#modelClips.get(asset) ?? []).map((clip) => clip.name);
   }
 
+  registerMaterial(id: string, material: Material): this {
+    if (this.#materials.has(id)) throw new Error(`Three material already registered: ${id}`);
+    this.#materials.set(id, material);
+    return this;
+  }
+
   attach(entity: EntityId, object: Object3D, managed = false): void {
     this.detach(entity);
     this.#objects.set(entity, object);
@@ -217,10 +255,50 @@ export class ThreeAdapter {
       }
     }
 
+    for (const entity of world.query(Transform, DynamicMesh)) {
+      alive.add(entity.id);
+      const data = entity.get(DynamicMesh);
+      const transform = entity.get(Transform);
+      if (!data || !transform) continue;
+
+      let object = this.#objects.get(entity.id);
+      if (!object) {
+        object = new Mesh(new BufferGeometry(), this.#materialOf(data.material));
+        this.attach(entity.id, object, true);
+        this.#meshVersions.set(entity.id, -1);
+      }
+      if (this.#meshVersions.get(entity.id) !== data.version) {
+        const mesh = object as Mesh;
+        mesh.geometry.dispose();
+        const geometry = new BufferGeometry();
+        geometry.setAttribute("position", new BufferAttribute(data.positions, 3));
+        geometry.setAttribute("normal", new BufferAttribute(data.normals, 3));
+        geometry.setAttribute("uv", new BufferAttribute(data.uvs, 2));
+        if (data.colors.length) geometry.setAttribute("color", new BufferAttribute(data.colors, 3));
+        geometry.setIndex(new BufferAttribute(data.indices, 1));
+        geometry.computeBoundingSphere();
+        mesh.geometry = geometry;
+        mesh.material = this.#materialOf(data.material);
+        this.#meshVersions.set(entity.id, data.version);
+      }
+      object.position.fromArray(transform.position);
+      object.quaternion.fromArray(transform.quaternion);
+      object.scale.fromArray(transform.scale);
+      object.visible = transform.visible;
+    }
+
     // 只回收 sync 自己创建的对象；手动 attach 的由调用方管理
     for (const id of [...this.#managed]) {
       if (!world.hasEntity(id) || !alive.has(id)) this.detach(id);
     }
+  }
+
+  #materialOf(id: string): Material {
+    const registered = id ? this.#materials.get(id) : undefined;
+    if (id && !registered) throw new Error(`Unknown Three material: ${id}`);
+    if (registered) return registered;
+    this.#defaultMaterial ??= new MeshStandardMaterial({ color: 0xbdbdbd });
+    return this.#defaultMaterial;
   }
 
   render(): void {
@@ -234,11 +312,13 @@ export class ThreeAdapter {
     this.#animations.delete(entity);
     object.removeFromParent();
     if (this.#managed.has(entity)) {
-      if (this.#sharedGeometry.has(object)) disposeMaterials(object);
+      if (this.#meshVersions.has(entity)) (object as Mesh).geometry.dispose(); // 动态网格：几何独占，材质共享
+      else if (this.#sharedGeometry.has(object)) disposeMaterials(object);
       else disposeObject(object);
     }
     this.#managed.delete(entity);
     this.#synced.delete(entity);
+    this.#meshVersions.delete(entity);
     this.#objects.delete(entity);
   }
 
@@ -309,7 +389,7 @@ export function three(options: ThreeAdapterOptions = {}): GamePlugin & {
       id: "gameweave.three",
       install: (game) => game.provide("renderer", adapter),
       setupWorld: (world) => {
-        world.register(Transform).register(Renderable).register(ManualTransform).register(ModelAnimation);
+        world.register(Transform).register(Renderable).register(ManualTransform).register(ModelAnimation).register(DynamicMesh);
         world.addSystem({
           name: "three.sync",
           phase: "render",

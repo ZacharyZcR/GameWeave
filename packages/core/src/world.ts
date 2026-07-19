@@ -194,10 +194,7 @@ export class World {
     if (committed && !committed.components.has(definition.id)) {
       // 已提交实体的新组件：数据立即可读，query 在阶段边界后可见
       const staged = this.#pendingComponents.get(id) ?? new Map<string, ComponentData>();
-      staged.set(definition.id, this.#createValue(definition, {
-        ...staged.get(definition.id),
-        ...input,
-      }));
+      staged.set(definition.id, this.#createValue(definition, input, staged.get(definition.id)));
       this.#pendingComponents.set(id, staged);
       this.#enqueue(() => {
         const value = this.#pendingComponents.get(id)?.get(definition.id);
@@ -208,10 +205,7 @@ export class World {
       return;
     }
     const record = committed ?? this.#pendingEntities.get(id);
-    record?.components.set(definition.id, this.#createValue(definition, {
-      ...record.components.get(definition.id),
-      ...input,
-    }));
+    record?.components.set(definition.id, this.#createValue(definition, input, record.components.get(definition.id)));
   }
 
   removeComponent(
@@ -412,11 +406,13 @@ export class World {
     return definition;
   }
 
+  // base 是世界已拥有的现值：字段引用直接保留（大块数据零拷贝）；只克隆外部传入的 input
   #createValue<T extends ComponentData>(
     definition: ComponentDefinition<T>,
     input: Partial<T>,
+    base?: ComponentData,
   ): T {
-    const value = { ...definition.defaults(), ...structuredClone(input) } as T;
+    const value = { ...definition.defaults(), ...base, ...structuredClone(input) } as T;
     if (definition.validate && !definition.validate(value)) {
       throw new Error(`Invalid component data: ${definition.id}`);
     }

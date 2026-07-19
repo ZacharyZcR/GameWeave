@@ -27,6 +27,8 @@ export interface RaycastHit {
   readonly distance: number;
   readonly point: [number, number, number];
   readonly normal: [number, number, number];
+  /** 体素 adapter 命中方块时给出的格坐标 */
+  readonly voxel?: readonly [number, number, number];
 }
 
 export interface PhysicsAdapter {
@@ -143,3 +145,4 @@ export function physics(adapter: PhysicsAdapter = new BasicPhysicsAdapter()) {
 }
 
 export { RapierPhysicsAdapter, type RapierPhysicsOptions } from "./rapier.js";
+export { VoxelPhysicsAdapter, type VoxelPhysicsOptions, type VoxelSource } from "./voxel.js";

@@ -268,6 +268,29 @@ GameWeave 不自研 DOM 框架，只提供：
 
 绑定默认逐帧 pull 求值，值未变化不写 DOM。不做依赖追踪，不做脏检查框架。
 
+## 11.4 体素与程序化几何
+
+```ts
+const noise = createNoise2D("terrain");           // core：确定性 2D 值噪声 + fbm
+const height = noise.fbm(x * .03, z * .03);
+
+entity.set(DynamicMesh, {                          // three：运行时几何，version 驱动重建
+  version: previous.version + 1,
+  positions, normals, uvs, colors, indices, material: "terrain",
+});
+adapter.registerMaterial("terrain", new MeshStandardMaterial({ vertexColors: true }));
+
+const physics = new VoxelPhysicsAdapter({          // physics：体素碰撞与 DDA 射线
+  isSolid: (x, y, z) => blockAt(x, y, z) !== AIR,
+  entityAt: (x, y, z) => chunkEntityOf(x, z),
+});
+physics.raycast(world, origin, direction, 7)?.voxel;  // 命中格坐标
+```
+
+- 大块二进制组件走**零拷贝约定**：数据字段（TypedArray）直接可变引用修改，`set(Chunk, { version: v + 1 })` 只提交版本号——merge 更新不会克隆世界已拥有的现值，只克隆传入的 input。
+- `DynamicMesh` 几何是 runtimeOnly：从游戏数据重建，不进存档。材质按注册 id 共享，几何每实体独占。
+- `VoxelPhysicsAdapter` 实现 `CharacterPhysicsAdapter`：character 移动、combat 射线与投射物零改动可用；实体 collider 与体素网格同场竞争，raycast 取最近命中。
+
 ## 11.5 Audio
 
 ```ts

@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>GameWeave / Voxel Slice</title>
+    <style>
+      :root{color-scheme:dark}
+      html,body,#game{width:100%;height:100%;margin:0;overflow:hidden;background:#10131a}
+      #game{display:block}
+      .crosshair{position:fixed;left:50%;top:50%;width:4px;height:4px;transform:translate(-50%,-50%);background:#e8e0cf;border-radius:50%;opacity:.85;pointer-events:none}
+      .hud{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 14px;background:#181a18e8;border:1px solid #e8e0cf26;color:#9e9a8f;font:11px ui-monospace,SFMono-Regular,monospace;letter-spacing:.08em;white-space:nowrap}
+      .hud b{color:#e0a84b}
+      .topline{position:fixed;top:14px;left:50%;transform:translateX(-50%);color:#9e9a8f;font:11px ui-monospace,monospace;letter-spacing:.12em}
+      .topline b{color:#e8e0cf}
+    </style>
+  </head>
+  <body>
+    <canvas id="game"></canvas>
+    <div class="topline"><b>GAMEWEAVE</b> VOXEL SLICE · <span id="stats">0 CHUNKS</span></div>
+    <div class="crosshair"></div>
+    <div class="hud"><b>WASD</b> 移动 <b>SPACE</b> 跳跃 <b>LMB</b> 挖掘 <b>RMB</b> 放置 <b>CLICK</b> 锁定鼠标</div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   AssetManager,
   createGame,
+  createNoise2D,
   defineComponent,
   definePlugin,
   definePrefab,
@@ -489,5 +490,35 @@ describe("regressions", () => {
     const world = new World("test");
     world.addSystem({ name: "orphan", phase: "fixedUpdate", after: ["missing"], run: () => {} });
     expect(() => world.runPhase("fixedUpdate", 1 / 60, 1)).toThrow("Unknown system dependency");
+  });
+});
+
+describe("noise", () => {
+  it("is deterministic per seed and varies across seeds", () => {
+    const a = createNoise2D("terrain");
+    const b = createNoise2D("terrain");
+    const c = createNoise2D("other");
+    expect(a.sample(3.7, -2.2)).toBe(b.sample(3.7, -2.2));
+    expect(a.fbm(12.5, 8.1)).toBe(b.fbm(12.5, 8.1));
+    expect(a.sample(3.7, -2.2)).not.toBe(c.sample(3.7, -2.2));
+    for (let i = 0; i < 50; i += 1) {
+      const value = a.fbm(i * .37, i * .61);
+      expect(Math.abs(value)).toBeLessThanOrEqual(1);
+    }
+  });
+
+  it("supports the zero-copy chunk mutation pattern", () => {
+    const Chunk = defineComponent<{ version: number; blocks: Uint8Array }>("chunk", {
+      defaults: () => ({ version: 0, blocks: new Uint8Array(16) }),
+      runtimeOnly: true,
+    });
+    const world = new World("voxel").register(Chunk);
+    const entity = world.spawn().set(Chunk, {});
+    const blocks = entity.get(Chunk)!.blocks;
+    blocks[3] = 7;                                  // 直接可变引用写入
+    entity.set(Chunk, { version: 1 });              // 只提交版本号，不触碰 blocks
+    expect(entity.get(Chunk)!.blocks).toBe(blocks); // 引用不变：零拷贝
+    expect(entity.get(Chunk)!.blocks[3]).toBe(7);
+    expect(entity.get(Chunk)!.version).toBe(1);
   });
 });

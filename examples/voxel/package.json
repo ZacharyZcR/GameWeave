@@ -1,0 +1,16 @@
+{
+  "name": "@gameweave/example-voxel",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": { "build": "vite build", "dev": "vite", "typecheck": "tsc -p tsconfig.json --noEmit" },
+  "dependencies": {
+    "@gameweave/audio": "^0.1.0",
+    "@gameweave/character": "^0.1.0",
+    "@gameweave/core": "^0.1.0",
+    "@gameweave/physics": "^0.1.0",
+    "@gameweave/three": "^0.1.0",
+    "three": "^0.180.0"
+  },
+  "devDependencies": { "vite": "^7.1.7" }
+}

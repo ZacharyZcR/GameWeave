@@ -1,7 +1,7 @@
 import { createGame } from "@gameweave/core";
 import { AnimationClip, BoxGeometry, Mesh, MeshStandardMaterial, Object3D, VectorKeyframeTrack } from "three";
 import { describe, expect, it, vi } from "vitest";
-import { ManualTransform, ModelAnimation, Renderable, three, Transform } from "./index.js";
+import { DynamicMesh, ManualTransform, ModelAnimation, Renderable, three, Transform } from "./index.js";
 
 describe("Three adapter", () => {
   it("syncs authoritative transforms and removes despawned objects", () => {
@@ -136,5 +136,57 @@ describe("model pipeline", () => {
 
     plugin.adapter.dispose();
     expect(dispose).toHaveBeenCalledOnce();
+  });
+});
+
+describe("dynamic mesh", () => {
+  const quad = () => ({
+    positions: new Float32Array([0, 0, 0, 1, 0, 0, 0, 1, 0]),
+    normals: new Float32Array([0, 0, 1, 0, 0, 1, 0, 0, 1]),
+    uvs: new Float32Array([0, 0, 1, 0, 0, 1]),
+    indices: new Uint32Array([0, 1, 2]),
+  });
+
+  it("builds and rebuilds geometry driven by the version field", () => {
+    const plugin = three();
+    const game = createGame().use(plugin);
+    const world = game.createWorld("voxel");
+    const entity = world.spawn().set(Transform, {}).set(DynamicMesh, { ...quad(), version: 1 });
+    game.advance(0);
+    const mesh = plugin.adapter.object(entity.id) as Mesh;
+    expect(mesh.geometry.getAttribute("position").count).toBe(3);
+    const firstGeometry = mesh.geometry;
+
+    // 未变更 version：不重建
+    game.advance(0);
+    expect((plugin.adapter.object(entity.id) as Mesh).geometry).toBe(firstGeometry);
+
+    const bigger = quad();
+    entity.set(DynamicMesh, {
+      positions: new Float32Array([...bigger.positions, 0, 0, 1, 1, 0, 1, 0, 1, 1]),
+      normals: new Float32Array([...bigger.normals, 0, 0, 1, 0, 0, 1, 0, 0, 1]),
+      uvs: new Float32Array([...bigger.uvs, 0, 0, 1, 0, 0, 1]),
+      indices: new Uint32Array([0, 1, 2, 3, 4, 5]),
+      version: 2,
+    });
+    game.advance(0);
+    expect((plugin.adapter.object(entity.id) as Mesh).geometry.getAttribute("position").count).toBe(6);
+
+    entity.despawn();
+    game.advance(0);
+    expect(plugin.adapter.object(entity.id)).toBeUndefined();
+  });
+
+  it("resolves registered materials and shares them across instances", () => {
+    const plugin = three();
+    const material = new MeshStandardMaterial({ color: 0x4a7 });
+    plugin.adapter.registerMaterial("terrain", material);
+    const game = createGame().use(plugin);
+    const world = game.createWorld("voxel");
+    const first = world.spawn().set(Transform, {}).set(DynamicMesh, { ...quad(), version: 1, material: "terrain" });
+    const second = world.spawn().set(Transform, {}).set(DynamicMesh, { ...quad(), version: 1, material: "terrain" });
+    game.advance(0);
+    expect((plugin.adapter.object(first.id) as Mesh).material).toBe(material);
+    expect((plugin.adapter.object(second.id) as Mesh).material).toBe(material);
   });
 });
