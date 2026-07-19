@@ -1,4 +1,4 @@
-import { CharacterMotor, Controller, InputManager, Ragdoll, activateRagdoll, character } from "@gameweave/character";
+import { CharacterMotor, Controller, InputManager, Interactable, Ragdoll, activateRagdoll, character, findInteractable, interact } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
 import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload, throwGrenade } from "@gameweave/combat";
 import { audio, type AudioAdapter } from "@gameweave/audio";
@@ -49,6 +49,7 @@ const i18n = createI18n({
       controlActive: "FPS CONTROL ACTIVE", clickToEngage: "CLICK TO ENGAGE", reloading: "RELOADING", fragOut: "FRAG OUT",
       thirdPerson: "THIRD PERSON", firstPerson: "FIRST PERSON", physicsOnline: "RAPIER ONLINE", yes: "YES", no: "NO",
       attack: "ATTACK", chase: "CHASE", idle: "IDLE", roundFired: "ROUND FIRED", rangeReset: "RANGE RESET",
+      resupply: "[E] RESUPPLY", resupplied: "RESUPPLIED",
     },
     zh: {
       canvasLabel: "GameWeave 物理训练场", loadingTitle: "正在编织训练场", preparingAssets: "准备资源",
@@ -61,6 +62,7 @@ const i18n = createI18n({
       controlActive: "FPS 控制已启用", clickToEngage: "点击进入战斗", reloading: "换弹中", fragOut: "手雷投出",
       thirdPerson: "第三人称", firstPerson: "第一人称", physicsOnline: "RAPIER 已就绪", yes: "是", no: "否",
       attack: "攻击", chase: "追击", idle: "待机", roundFired: "已开火", rangeReset: "训练场已重置",
+      resupply: "[E] 补给弹药", resupplied: "补给完成",
     },
   },
 });
@@ -152,6 +154,8 @@ async function start(): Promise<void> {
   installDemoSystems(world, rendererPlugin.adapter, player, viewModel, effects, () => ({ yaw, pitch, aiming, thirdPerson }));
   bindTelemetry(world, player);
   const listenerForward = new Vector3();
+  let aimInteractable: Entity | undefined;
+  const interactPrompt = element("interact-prompt");
   world.addSystem({
     name: "showcase.listener", phase: "render", optionalAfter: ["showcase.camera"],
     run: () => {
@@ -161,7 +165,25 @@ async function start(): Promise<void> {
         [camera.position.x, camera.position.y, camera.position.z],
         [listenerForward.x, listenerForward.y, listenerForward.z],
       );
+      aimInteractable = findInteractable(
+        world,
+        [camera.position.x, camera.position.y, camera.position.z],
+        [listenerForward.x, listenerForward.y, listenerForward.z],
+        4,
+      );
+      const promptKey = aimInteractable?.get(Interactable)?.prompt;
+      interactPrompt.hidden = !promptKey;
+      if (promptKey) interactPrompt.textContent = t(promptKey);
     },
+  });
+  world.events.on("interact:use", (event) => {
+    const { entity } = event as { entity?: unknown };
+    if (entity !== "supply-box") return;
+    player.set(Ammo, { magazine: 12, reserve: 48 });
+    grenades = 3;
+    updateGrenades();
+    audioPlugin.adapter.play("reload", { volume: .8 });
+    element("runtime-state").textContent = t("resupplied");
   });
 
   let collisionCount = 0;
@@ -287,6 +309,7 @@ async function start(): Promise<void> {
       updateGrenades();
       element("runtime-state").textContent = t("fragOut");
     }
+    if (code === "KeyE" && !repeat && aimInteractable) interact(world, aimInteractable, player);
     if (code === "KeyV" && !repeat) {
       thirdPerson = !thirdPerson;
       if (thirdPerson) player.set(Renderable, { asset: "operator" });
@@ -347,6 +370,11 @@ function configureRenderer(adapter: ReturnType<typeof three>["adapter"]): void {
 function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("ground", () => mesh(new BoxGeometry(40, .02, 40), 0x252925, { receive: true }));
   adapter.registerAsset("crate", () => mesh(new BoxGeometry(1, 1, 1), 0x68715f, { cast: true, receive: true }));
+  adapter.registerAsset("supply", () => {
+    const box = mesh(new BoxGeometry(1.1, .9, 1.1), 0x3f5a3b, { cast: true, receive: true });
+    box.add(mesh(new BoxGeometry(1.14, .16, .3), 0xb98535, { metalness: .3 }));
+    return box;
+  });
   adapter.registerAsset("barrier", () => mesh(new BoxGeometry(3.5, 2, .65), 0x3c423c, { cast: true, receive: true }));
   adapter.registerAsset("operator", () => createSoldier({ armor: 0x35608a, visor: 0x8fb6dd }));
   adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
@@ -539,6 +567,9 @@ function buildArena(world: World, config: ArenaConfig): Entity {
       })
       .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 }).set(Ragdoll, {});
   }
+  world.spawn({ id: "supply-box" }).set(Transform, { position: [3.5, .45, 6] }).set(Renderable, { asset: "supply" })
+    .set(RigidBody, { type: "static" }).set(Collider, { size: [1.1, .9, 1.1] })
+    .set(Interactable, { prompt: "resupply", radius: 3.2 });
   return world.spawn({ id: "player" }).set(Transform, { position: [0, 1.01, 5] })
     .set(RigidBody, { type: "kinematic", gravityScale: 0 }).set(Collider, { shape: "capsule", halfHeight: .5, radius: .5 })
     .set(CharacterMotor, { speed: 5.2, sprintSpeed: 8.5, jumpSpeed: 6.2, gravity: 16 }).set(Controller, { input: "range" })

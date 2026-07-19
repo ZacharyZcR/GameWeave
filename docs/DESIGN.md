@@ -208,13 +208,14 @@ Health           Damageable       Faction
 Weapon           Ammo             Projectile
 Hitscan          Inventory        Sensor
 Targeting        NavigationAgent  StateMachine
+Explosion        Interactable
 ```
 
 候选（在至少两个真实游戏中出现前不进入通用层）：
 
 ```text
-Explosion        Behavior         Ability
-Effect           Cooldown         Interactable
+Behavior         Ability
+Effect           Cooldown
 ```
 
 高层 preset（例如 FPSPlayer、AssaultBot）只能组合这些原语，不允许形成平行实现。

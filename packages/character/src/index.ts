@@ -1,4 +1,4 @@
-import { defineComponent, definePlugin, type Entity } from "@gameweave/core";
+import { defineComponent, definePlugin, type Entity, type World } from "@gameweave/core";
 import { RigidBody, supportsCharacterMovement, type PhysicsAdapter } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
@@ -87,6 +87,37 @@ export const CameraRig = defineComponent("cameraRig", {
   defaults: { mode: "firstPerson" as "firstPerson" | "thirdPerson", fov: 60, distance: 4, eyeHeight: 1.6 },
 });
 
+// 可交互物：prompt 是给表现层的提示文案，触发逻辑由游戏订阅 interact:use 决定
+export const Interactable = defineComponent("interactable", {
+  defaults: { prompt: "", radius: 3, enabled: true },
+});
+
+// 准星射线交互查询：命中第一个启用的 Interactable 且距离在其 radius 内
+export function findInteractable(
+  world: World,
+  origin: readonly [number, number, number],
+  direction: readonly [number, number, number],
+  maxDistance = 4,
+): Entity | undefined {
+  const physics = world.service<PhysicsAdapter>("physics");
+  const hit = physics.raycast(world, origin, direction, maxDistance);
+  if (!hit) return undefined;
+  const entity = world.entity(hit.entity);
+  const interactable = entity.get(Interactable);
+  if (!interactable?.enabled || hit.distance > interactable.radius) return undefined;
+  return entity;
+}
+
+export function interact(world: World, entity: Entity, instigator?: Entity): boolean {
+  const interactable = entity.get(Interactable);
+  if (!interactable?.enabled) return false;
+  world.events.emit("interact:use", {
+    entity: entity.id,
+    ...(instigator ? { instigator: instigator.id } : {}),
+  });
+  return true;
+}
+
 export const Ragdoll = defineComponent("ragdoll", {
   defaults: {
     active: false,
@@ -114,7 +145,7 @@ export function character(input = new InputManager()) {
       id: "gameweave.character",
       install: (game) => game.provide("input", input),
       setupWorld: (world) => {
-        world.register(Transform).register(RigidBody).register(CharacterMotor).register(Controller).register(CameraRig).register(Ragdoll);
+        world.register(Transform).register(RigidBody).register(CharacterMotor).register(Controller).register(CameraRig).register(Ragdoll).register(Interactable);
         world.addSystem({
           name: "character.input", phase: "fixedUpdate",
           optionalBefore: ["physics.step"],

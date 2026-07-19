@@ -2,7 +2,7 @@ import { createGame } from "@gameweave/core";
 import { Collider, physics, RapierPhysicsAdapter, RigidBody } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 import { describe, expect, it } from "vitest";
-import { activateRagdoll, character, CharacterMotor, Controller, InputManager, Ragdoll } from "./index.js";
+import { activateRagdoll, character, CharacterMotor, Controller, findInteractable, InputManager, interact, Interactable, Ragdoll } from "./index.js";
 
 describe("character controller", () => {
   it("converts a captured input snapshot into body velocity", () => {
@@ -64,5 +64,32 @@ describe("character controller", () => {
 
     expect(player.get(Ragdoll)).toMatchObject({ active: true, elapsed: .5, impulse: [1, 2, 3] });
     expect(player.get(RigidBody)?.velocity).toEqual([0, 0, 0]);
+  });
+});
+
+describe("interactables", () => {
+  it("finds enabled interactables through a physics raycast and emits interact:use", () => {
+    const game = createGame().use(physics()).use(character());
+    const world = game.createWorld("room");
+    const crate = world.spawn({ id: "supply" }).set(Transform, { position: [0, 0, 3] })
+      .set(Collider, { shape: "sphere", radius: .8 }).set(Interactable, { prompt: "RESUPPLY" });
+    const events: unknown[] = [];
+    world.events.on("interact:use", (event) => events.push(event));
+
+    expect(findInteractable(world, [0, 0, 0], [0, 0, 1])?.id).toBe("supply");
+    expect(interact(world, crate)).toBe(true);
+    expect(events).toEqual([{ entity: "supply" }]);
+
+    crate.set(Interactable, { enabled: false });
+    expect(findInteractable(world, [0, 0, 0], [0, 0, 1])).toBeUndefined();
+    expect(interact(world, crate)).toBe(false);
+  });
+
+  it("rejects hits beyond the interactable radius", () => {
+    const game = createGame().use(physics()).use(character());
+    const world = game.createWorld("room");
+    world.spawn({ id: "far" }).set(Transform, { position: [0, 0, 3.5] })
+      .set(Collider, { shape: "sphere", radius: .5 }).set(Interactable, { radius: 2 });
+    expect(findInteractable(world, [0, 0, 0], [0, 0, 1], 6)).toBeUndefined();
   });
 });

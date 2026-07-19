@@ -154,6 +154,8 @@ body.set(BotController, {
 
 Controller 是 Component：可序列化、可回放、inspect 可见，切换控制权就是组件替换。InputSource 只以注册名出现在 Component 中。
 
+交互通过 `Interactable` 组件表达：`{ prompt, radius, enabled }`，`prompt` 是给表现层的提示文案（或 i18n key）。`findInteractable(world, origin, direction, maxDistance)` 沿准星射线返回第一个启用且在其 `radius` 内的可交互实体；`interact(world, entity, instigator?)` 发布 `interact:use` 事件，具体效果由游戏订阅决定——引擎不内置"门"或"箱子"的语义。
+
 死亡或失衡状态通过 `Ragdoll` 组件表达。`activateRagdoll(entity, { impulse, duration })` 会切换可序列化状态，并停止 CharacterMotor 接管该实体；Three、Rapier 或其他 adapter 根据同一状态驱动具体骨架和物理表现。
 
 ## 7. Combat
