@@ -4,7 +4,7 @@ import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fi
 import { AssetManager, assets, createGame, defineComponent, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
-import { Renderable, Transform, three } from "@gameweave/three";
+import { ModelAnimation, Renderable, Transform, three } from "@gameweave/three";
 import {
   ACESFilmicToneMapping,
   AmbientLight,
@@ -73,6 +73,11 @@ async function start(): Promise<void> {
   const rendererPlugin = three({ canvas, rendererOptions: { antialias: true } });
   configureRenderer(rendererPlugin.adapter);
   registerVisuals(rendererPlugin.adapter);
+  loadingState.textContent = "载入 GLB 模型";
+  await Promise.all([
+    rendererPlugin.adapter.loadModel("fox", "/models/Fox.glb", { scale: .018, castShadow: true }),
+    rendererPlugin.adapter.loadModel("cesium-man", "/models/CesiumMan.glb", { castShadow: true }),
+  ]);
   const viewModel = createViewModel();
   rendererPlugin.adapter.camera.add(viewModel);
   rendererPlugin.adapter.scene.add(rendererPlugin.adapter.camera);
@@ -106,6 +111,7 @@ async function start(): Promise<void> {
     .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
+  spawnWildlife(world, rendererPlugin.adapter);
   const effects = createEffects(rendererPlugin.adapter);
   installDemoSystems(world, rendererPlugin.adapter, player, viewModel, effects, () => ({ yaw, pitch, aiming, thirdPerson }));
   bindTelemetry(world, player);
@@ -129,8 +135,13 @@ async function start(): Promise<void> {
       activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
       return;
     }
-    // 可破坏物：炸成物理碎块，不是凭空消失
     const position = entity.get(Transform)?.position;
+    if (target.startsWith("fox")) {
+      if (position) effects.burst(position, "flesh", 18);
+      entity.despawn();
+      return;
+    }
+    // 可破坏物：炸成物理碎块，不是凭空消失
     if (position) {
       effects.burst(position, "dust", 14);
       spawnPropDebris(world, target, position);
@@ -405,6 +416,21 @@ function spawnPropDebris(world: World, id: string, position: readonly [number, n
   }
 }
 
+// 真实 GLB 模型的接入验证：一只可射击的站桩狐狸 + 两只游荡狐狸 + 绕圈的 CesiumMan
+function spawnWildlife(world: World, adapter: ReturnType<typeof three>["adapter"]): void {
+  world.spawn({ id: "fox-static" }).set(Transform, { position: [6, -.98, -4] })
+    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Survey" })
+    .set(RigidBody, { type: "static" }).set(Collider, { shape: "sphere", radius: .7 })
+    .set(Health, { current: 20, max: 20 }).set(DamageInbox, {});
+  world.spawn({ id: "fox-walk" }).set(Transform, { position: [-8, -.98, 6] })
+    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Walk" });
+  world.spawn({ id: "fox-run" }).set(Transform, { position: [9, -.98, 8] })
+    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Run" });
+  const walkClip = adapter.animations("cesium-man")[0] ?? "";
+  world.spawn({ id: "cesium-man" }).set(Transform, { position: [0, -.98, -2] })
+    .set(Renderable, { asset: "cesium-man" }).set(ModelAnimation, { clip: walkClip });
+}
+
 function spawnBarrier(world: World, index: number, position: readonly [number, number, number]): void {
   world.spawn({ id: `barrier-${index}` }).set(Transform, { position: [...position] }).set(Renderable, { asset: "barrier" })
     .set(RigidBody, { type: "static" }).set(Collider, { size: [3.5, 2, .65] })
@@ -621,6 +647,33 @@ function installDemoSystems(
         const model = object?.userData.model as Object3D | undefined;
         if (!targetPosition || !model) continue;
         model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
+      }
+    },
+  });
+  const patrols: Record<string, { center: [number, number]; radius: number; angular: number; yawOffset: number }> = {
+    "fox-walk": { center: [-8, 6], radius: 4, angular: .45, yawOffset: 0 },
+    "fox-run": { center: [9, 8], radius: 3, angular: 1.1, yawOffset: 0 },
+    "cesium-man": { center: [0, -2], radius: 7, angular: .28, yawOffset: Math.PI / 2 },
+  };
+  world.addSystem({
+    name: "showcase.wildlife", phase: "fixedUpdate",
+    run: () => {
+      const seconds = world.tick / 60;
+      for (const [id, patrol] of Object.entries(patrols)) {
+        if (!world.hasEntity(id)) continue;
+        const entity = world.entity(id);
+        const angle = seconds * patrol.angular;
+        const yaw = Math.atan2(Math.cos(angle), Math.sin(angle)) + patrol.yawOffset;
+        entity.set(Transform, {
+          position: [patrol.center[0] + Math.cos(angle) * patrol.radius, -.98, patrol.center[1] + Math.sin(angle) * patrol.radius],
+          quaternion: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
+        });
+      }
+      // 每 6 秒 Walk/Run 互切，验证动画 crossfade
+      if (world.hasEntity("fox-walk")) {
+        const fox = world.entity("fox-walk");
+        const clip = Math.floor(seconds / 6) % 2 === 0 ? "Walk" : "Run";
+        if (fox.get(ModelAnimation)?.clip !== clip) fox.set(ModelAnimation, { clip });
       }
     },
   });
