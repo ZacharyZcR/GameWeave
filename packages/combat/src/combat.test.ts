@@ -84,6 +84,16 @@ it("keeps cooldown and reload working across a JSON save/load", () => {
   expect(fire(shooter2, world2.entity("target"), world2)).toBe(true);
 });
 
+it("emits reload start before reload completion", () => {
+  const game = createGame().use(physics()).use(combat());
+  const world = game.createWorld("reload");
+  const entity = world.spawn({ id: "player" }).set(Weapon, { reloadTime: 1 }).set(Ammo, { magazine: 0, reserve: 12 });
+  const events: unknown[] = [];
+  world.events.on("combat:reloadStart", (event) => events.push(event));
+  expect(reload(entity, world)).toBe(true);
+  expect(events).toEqual([{ entity: "player", duration: 1 }]);
+});
+
 it("spawns configured projectiles from inside a fixed update system", () => {
   const game = createGame({ fixedStep: 1 }).use(combat());
   const world = game.createWorld("arena");

@@ -154,6 +154,8 @@ body.set(BotController, {
 
 Controller 是 Component：可序列化、可回放、inspect 可见，切换控制权就是组件替换。InputSource 只以注册名出现在 Component 中。
 
+死亡或失衡状态通过 `Ragdoll` 组件表达。`activateRagdoll(entity, { impulse, duration })` 会切换可序列化状态，并停止 CharacterMotor 接管该实体；Three、Rapier 或其他 adapter 根据同一状态驱动具体骨架和物理表现。
+
 ## 7. Combat
 
 ```ts
@@ -195,6 +197,8 @@ queueDamage(target, {
 `queueDamage()` 向 `DamageInbox` 入队，在下一个 `fixedUpdate` 由 `combat.damage` 结算。调用后立即读 `Health` 拿到的仍是旧值。`fire()`、`fireHitscan()`、`reload(entity, world)` 和 `spawnProjectile()` 是同一数据路径上的便捷函数；reload 与 projectile lifetime 都使用 fixed simulation time。
 
 Projectile 武器不会在扣弹时提前结算伤害。`fireDirection()` 只生成弹丸；`combat.projectiles` 在每个 fixed tick 对本帧位移执行 swept raycast。弹丸碰到的第一个 collider 会终止它，只有该实体同时具备 `Health` 与 `DamageInbox` 才会产生伤害。因此高速弹丸不会穿透薄墙，障碍物也不会被误写入伤害组件。
+
+`reload()` 成功时立即发布 `combat:reloadStart`，装填完成后发布 `combat:reload`。表现层可以据此播放完整换弹动作，不需要轮询或复制计时器。
 
 ## 8. AI
 

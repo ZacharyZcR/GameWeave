@@ -1,6 +1,6 @@
-import { CharacterMotor, Controller, InputManager, character } from "@gameweave/character";
+import { CharacterMotor, Controller, InputManager, Ragdoll, activateRagdoll, character } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
-import { Ammo, DamageInbox, Dead, Faction, Health, Weapon, combat, fireDirection } from "@gameweave/combat";
+import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload } from "@gameweave/combat";
 import { AssetManager, assets, createGame, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
@@ -112,13 +112,13 @@ async function start(): Promise<void> {
     const { target } = event as { target?: unknown };
     if (typeof target !== "string" || !world.hasEntity(target)) return;
     if (target === player.id) {
-      element("runtime-state").textContent = "OPERATOR DOWN - PRESS R";
+      element("runtime-state").textContent = "OPERATOR DOWN - PRESS T";
       return;
     }
     const entity = world.entity(target);
     entity.set(BotController, { enabled: false });
-    entity.set(Transform, { visible: false });
-    entity.remove(Collider);
+    entity.set(RigidBody, { lockRotations: false, velocity: [0, 2.2, 1.8] });
+    activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
   });
   world.events.on("combat:fire", (event) => {
     const { projectile } = event as { projectile?: unknown };
@@ -142,7 +142,8 @@ async function start(): Promise<void> {
     element("runtime-state").textContent = document.pointerLockElement === canvas ? "FPS CONTROL ACTIVE" : "CLICK TO ENGAGE";
   });
   addEventListener("keydown", ({ code, repeat }) => {
-    if (code === "KeyR" && !repeat) resetRange(world, player);
+    if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = "RELOADING";
+    if (code === "KeyT" && !repeat) resetRange(world, player);
   });
   addEventListener("resize", () => resize(rendererPlugin.adapter, canvas));
   resize(rendererPlugin.adapter, canvas);
@@ -218,22 +219,23 @@ function createSoldier(): Object3D {
   const fabric = new MeshStandardMaterial({ color: 0x343833, roughness: .92 });
   const dark = new MeshStandardMaterial({ color: 0x171918, roughness: .58, metalness: .28 });
   const visor = new MeshStandardMaterial({ color: 0xd99b3f, roughness: .2, metalness: .72 });
-  part(model, new BoxGeometry(.78, .72, .34), armor, [0, .2, 0]);
+  const torso = part(model, new BoxGeometry(.78, .72, .34), armor, [0, .2, 0]);
   part(model, new BoxGeometry(.9, .16, .42), armor, [0, .48, 0]);
   part(model, new BoxGeometry(.56, .28, .38), dark, [0, -.22, 0]);
-  part(model, new SphereGeometry(.27, 16, 10), fabric, [0, .78, 0]);
+  const head = part(model, new SphereGeometry(.27, 16, 10), fabric, [0, .78, 0]);
   part(model, new BoxGeometry(.43, .13, .29), visor, [0, .79, -.19]);
   part(model, new BoxGeometry(.56, .1, .42), armor, [0, .98, 0]);
-  part(model, new BoxGeometry(.18, .62, .2), fabric, [-.51, .13, 0], [0, 0, -.1]);
-  part(model, new BoxGeometry(.18, .62, .2), fabric, [.51, .13, 0], [0, 0, .1]);
+  const leftArm = part(model, new BoxGeometry(.18, .62, .2), fabric, [-.51, .13, 0], [0, 0, -.1]);
+  const rightArm = part(model, new BoxGeometry(.18, .62, .2), fabric, [.51, .13, 0], [0, 0, .1]);
   part(model, new BoxGeometry(.24, .16, .25), armor, [-.5, .4, 0]);
   part(model, new BoxGeometry(.24, .16, .25), armor, [.5, .4, 0]);
-  part(model, new BoxGeometry(.24, .68, .26), fabric, [-.2, -.65, 0]);
-  part(model, new BoxGeometry(.24, .68, .26), fabric, [.2, -.65, 0]);
+  const leftLeg = part(model, new BoxGeometry(.24, .68, .26), fabric, [-.2, -.65, 0]);
+  const rightLeg = part(model, new BoxGeometry(.24, .68, .26), fabric, [.2, -.65, 0]);
   part(model, new BoxGeometry(.3, .16, .48), dark, [-.2, -1.0, -.08]);
   part(model, new BoxGeometry(.3, .16, .48), dark, [.2, -1.0, -.08]);
   const rifle = part(model, new BoxGeometry(.14, .16, .88), dark, [.3, .08, -.38], [.12, 0, -.28]);
   part(rifle, new CylinderGeometry(.025, .025, .46, 8), dark, [0, 0, -.62], [Math.PI / 2, 0, 0]);
+  root.userData.bones = { torso, head, leftArm, rightArm, leftLeg, rightLeg, rifle };
   root.traverse((object) => { if (object instanceof Mesh) object.castShadow = true; });
   return root;
 }
@@ -255,6 +257,10 @@ function createViewModel(): Group {
   part(root, new BoxGeometry(.12, .1, .16), gun, [0, .23, -.48]);
   part(root, new BoxGeometry(.08, .16, .22), gun, [0, -.1, -.22], [-.22, 0, 0]);
   part(root, new BoxGeometry(.1, .2, .3), gun, [0, -.12, -.53], [.18, 0, 0]);
+  const muzzle = new Object3D();
+  muzzle.position.set(0, .08, -1.72);
+  root.add(muzzle);
+  root.userData.muzzle = muzzle;
   root.userData.recoil = 0;
   return root;
 }
@@ -292,14 +298,14 @@ function buildArena(world: World, config: ArenaConfig): Entity {
       .set(StateMachine, {}).set(BotController, {}).set(Weapon, {
         id: "ai-rifle", damage: 2, cooldown: .7, range: 36, delivery: "projectile", projectileSpeed: 24,
       })
-      .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 });
+      .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 }).set(Ragdoll, {});
   }
   return world.spawn({ id: "player" }).set(Transform, { position: [0, 1.01, 5] })
     .set(RigidBody, { type: "kinematic", gravityScale: 0 }).set(Collider, { shape: "capsule", halfHeight: .5, radius: .5 })
     .set(CharacterMotor, { speed: 5.2, sprintSpeed: 8.5, jumpSpeed: 6.2, gravity: 16 }).set(Controller, { input: "range" })
     .set(Health, { current: 100, max: 100 }).set(DamageInbox, {}).set(Faction, { id: "blue" })
     .set(Weapon, { id: "range-rifle", damage: 40, cooldown: .18, range: 40, delivery: "projectile", projectileSpeed: 38 })
-    .set(Ammo, { magazine: 12, reserve: 0, capacity: 12 });
+    .set(Ammo, { magazine: 12, reserve: 48, capacity: 12 });
 }
 
 function installDemoSystems(
@@ -322,19 +328,23 @@ function installDemoSystems(
       const moving = Math.min(1, Math.hypot(velocity[0], velocity[2]) / 5);
       const time = performance.now() * .001;
       const recoil = Number(viewModel.userData.recoil ?? 0) * Math.exp(-dt * 18);
+      const reloading = player.get(Reloading), weapon = player.get(Weapon);
+      const reloadProgress = reloading && weapon ? 1 - reloading.remaining / weapon.reloadTime : 0;
+      const reloadArc = reloading ? Math.sin(reloadProgress * Math.PI) : 0;
       viewModel.userData.recoil = recoil;
       viewModel.position.set(
         .38 + Math.sin(time * 8) * .012 * moving,
-        -.38 + Math.abs(Math.cos(time * 8)) * .012 * moving - recoil * .035,
+        -.38 + Math.abs(Math.cos(time * 8)) * .012 * moving - recoil * .035 - reloadArc * .34,
         -.72 + recoil * .11,
       );
-      viewModel.rotation.set(recoil * .08, 0, Math.sin(time * 4) * .006 * moving);
+      viewModel.rotation.set(recoil * .08 + reloadArc * .28, 0, Math.sin(time * 4) * .006 * moving + reloadArc * .55);
     },
   });
   world.addSystem({
     name: "showcase.aiFacing", phase: "render", after: ["three.sync"], before: ["three.render"],
     run: () => {
       for (const bot of world.query(BotController, Targeting, Transform)) {
+        if (bot.get(Ragdoll)?.active) continue;
         const targetId = bot.get(Targeting)?.target;
         const botPosition = bot.get(Transform)?.position;
         if (!targetId || !botPosition || !world.hasEntity(targetId)) continue;
@@ -343,6 +353,29 @@ function installDemoSystems(
         const model = object?.userData.model as Object3D | undefined;
         if (!targetPosition || !model) continue;
         model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
+      }
+    },
+  });
+  world.addSystem({
+    name: "showcase.ragdolls", phase: "render", after: ["three.sync"], before: ["three.render"],
+    run: () => {
+      for (const entity of world.query(Ragdoll)) {
+        const ragdoll = entity.get(Ragdoll);
+        const object = adapter.object(entity.id);
+        const model = object?.userData.model as Object3D | undefined;
+        const bones = object?.userData.bones as Record<string, Object3D> | undefined;
+        if (!ragdoll || !model || !bones) continue;
+        const t = ragdoll.active ? Math.min(1, ragdoll.elapsed / ragdoll.duration) : 0;
+        const eased = 1 - (1 - t) ** 3;
+        model.rotation.z = eased * 1.42;
+        model.rotation.x = eased * -.28;
+        model.position.y = eased * -.72;
+        bones.leftArm!.rotation.z = -.1 - eased * 1.5;
+        bones.rightArm!.rotation.z = .1 + eased * 1.2;
+        bones.leftLeg!.rotation.x = eased * .55;
+        bones.rightLeg!.rotation.x = eased * -.42;
+        bones.head!.rotation.z = eased * -.5;
+        bones.rifle!.rotation.x = .12 + eased * .85;
       }
     },
   });
@@ -371,7 +404,9 @@ function shootCrosshair(
 ): void {
   const directionVector = renderer.camera.getWorldDirection(new Vector3());
   const direction: [number, number, number] = [directionVector.x, directionVector.y, directionVector.z];
-  const originVector = renderer.camera.position.clone().addScaledVector(directionVector, .7);
+  renderer.camera.updateMatrixWorld(true);
+  const muzzle = viewModel.userData.muzzle as Object3D | undefined;
+  const originVector = muzzle?.getWorldPosition(new Vector3()) ?? renderer.camera.position.clone().addScaledVector(directionVector, .7);
   const origin: [number, number, number] = [originVector.x, originVector.y, originVector.z];
   const projectile = fireDirection(player, world, origin, direction);
   const transform = player.get(Transform);
@@ -388,9 +423,11 @@ function resetRange(world: World, player: Entity): void {
     target.set(Transform, { visible: true });
     if (!target.has(Collider)) target.set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 });
     if (target.has(Dead)) target.remove(Dead);
+    target.set(Ragdoll, { active: false, elapsed: 0 });
+    target.set(RigidBody, { lockRotations: true, velocity: [0, 0, 0] });
     target.set(BotController, { enabled: true });
   }
-  player.set(Ammo, { magazine: 12 });
+  player.set(Ammo, { magazine: 12, reserve: 48 });
   player.set(Health, { current: 100 });
   if (player.has(Dead)) player.remove(Dead);
   element("runtime-state").textContent = "RANGE RESET";

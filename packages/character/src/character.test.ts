@@ -2,7 +2,7 @@ import { createGame } from "@gameweave/core";
 import { Collider, physics, RapierPhysicsAdapter, RigidBody } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 import { describe, expect, it } from "vitest";
-import { character, CharacterMotor, Controller, InputManager } from "./index.js";
+import { activateRagdoll, character, CharacterMotor, Controller, InputManager, Ragdoll } from "./index.js";
 
 describe("character controller", () => {
   it("converts a captured input snapshot into body velocity", () => {
@@ -48,5 +48,21 @@ describe("character controller", () => {
     expect(player.get(CharacterMotor)?.grounded).toBe(true);
     expect(player.get(Transform)?.position[1]).toBeCloseTo(1.01, 1);
     adapter.dispose();
+  });
+
+  it("advances serializable ragdoll state and disables character movement", () => {
+    const input = new InputManager().register("test", () => ({
+      move: [1, 0], look: [0, 0], jump: false, sprint: false, fire: false,
+    }));
+    const game = createGame({ step: .5 }).use(physics()).use(character(input));
+    const world = game.createWorld("ragdoll");
+    const player = world.spawn().set(Transform, {}).set(RigidBody, { gravityScale: 0 })
+      .set(CharacterMotor, {}).set(Controller, { input: "test" }).set(Ragdoll, {});
+    activateRagdoll(player, { duration: 1, impulse: [1, 2, 3] });
+
+    game.step();
+
+    expect(player.get(Ragdoll)).toMatchObject({ active: true, elapsed: .5, impulse: [1, 2, 3] });
+    expect(player.get(RigidBody)?.velocity).toEqual([0, 0, 0]);
   });
 });

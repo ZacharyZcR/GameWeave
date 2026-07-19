@@ -153,6 +153,7 @@ export function reload(entity: Entity, world: World): boolean {
   const weapon = entity.get(Weapon);
   if (!ammo || !weapon || entity.has(Reloading) || ammo.magazine >= ammo.capacity || ammo.reserve <= 0) return false;
   entity.set(Reloading, { remaining: weapon.reloadTime });
+  world.events.emit("combat:reloadStart", { entity: entity.id, duration: weapon.reloadTime });
   return true;
 }
 

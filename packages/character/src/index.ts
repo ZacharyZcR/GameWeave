@@ -1,4 +1,4 @@
-import { defineComponent, definePlugin } from "@gameweave/core";
+import { defineComponent, definePlugin, type Entity } from "@gameweave/core";
 import { RigidBody, supportsCharacterMovement, type PhysicsAdapter } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
@@ -87,17 +87,48 @@ export const CameraRig = defineComponent("cameraRig", {
   defaults: { mode: "firstPerson" as "firstPerson" | "thirdPerson", fov: 60, distance: 4, eyeHeight: 1.6 },
 });
 
+export const Ragdoll = defineComponent("ragdoll", {
+  defaults: {
+    active: false,
+    elapsed: 0,
+    duration: 1.2,
+    impulse: [0, 0, 0] as [number, number, number],
+  },
+});
+
+export function activateRagdoll(entity: Entity, options: {
+  readonly duration?: number;
+  readonly impulse?: [number, number, number];
+} = {}): void {
+  entity.set(Ragdoll, {
+    active: true,
+    elapsed: 0,
+    duration: options.duration ?? 1.2,
+    impulse: options.impulse ?? [0, 0, 0],
+  });
+}
+
 export function character(input = new InputManager()) {
   return {
     ...definePlugin({
       id: "gameweave.character",
       install: (game) => game.provide("input", input),
       setupWorld: (world) => {
-        world.register(Transform).register(RigidBody).register(CharacterMotor).register(Controller).register(CameraRig);
+        world.register(Transform).register(RigidBody).register(CharacterMotor).register(Controller).register(CameraRig).register(Ragdoll);
         world.addSystem({
           name: "character.input", phase: "fixedUpdate",
           optionalBefore: ["physics.step"],
           run: () => input.capture(),
+        });
+        world.addSystem({
+          name: "character.ragdoll", phase: "fixedUpdate",
+          after: ["character.input"], optionalBefore: ["character.move", "physics.step"],
+          run: ({ dt }) => {
+            for (const entity of world.query(Ragdoll)) {
+              const ragdoll = entity.get(Ragdoll);
+              if (ragdoll?.active) entity.set(Ragdoll, { elapsed: Math.min(ragdoll.duration, ragdoll.elapsed + dt) });
+            }
+          },
         });
         world.addSystem({
           name: "character.move", phase: "fixedUpdate",
@@ -109,7 +140,7 @@ export function character(input = new InputManager()) {
               const motor = entity.get(CharacterMotor);
               const controller = entity.get(Controller);
               const body = entity.get(RigidBody);
-              if (!motor || !controller || !body || controller.type !== "player") continue;
+              if (!motor || !controller || !body || controller.type !== "player" || entity.get(Ragdoll)?.active) continue;
               const state = input.get(controller.input);
               const speed = state.sprint ? motor.sprintSpeed : motor.speed;
               const verticalSpeed = state.jump && motor.grounded
