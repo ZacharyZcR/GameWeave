@@ -202,6 +202,8 @@ Projectile 武器不会在扣弹时提前结算伤害。`fireDirection()` 只生
 
 `reload()` 成功时立即发布 `combat:reloadStart`，装填完成后发布 `combat:reload`。表现层可以据此播放完整换弹动作，不需要轮询或复制计时器。
 
+`throwGrenade()` 生成带 `Grenade` 组件的 dynamic 刚体，由物理 adapter 模拟抛物线；`combat.grenades` 在 fixed tick 递减引信（可序列化的剩余量语义），到点调用 `explode()`。爆炸对范围内具备 `Health` + `DamageInbox` 的实体按距离线性衰减 `queueDamage`（不分敌我、不做遮挡检测），对 dynamic 刚体施加径向冲量，并发布 `combat:explosion`。给场景物件挂上 `Health` + `DamageInbox` 即可获得可破坏地形——子弹与爆炸走同一条伤害路径。
+
 ## 8. AI
 
 预设入口：

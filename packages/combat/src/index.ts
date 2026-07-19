@@ -1,6 +1,6 @@
 import { defineComponent, definePlugin, type Entity, type EntityId, type World } from "@gameweave/core";
 import type { PhysicsAdapter } from "@gameweave/physics";
-import { RigidBody } from "@gameweave/physics";
+import { Collider, RigidBody } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
 export interface DamageMessage extends Record<string, unknown> {
@@ -32,6 +32,9 @@ export const Projectile = defineComponent("projectile", { defaults: {
 } });
 export const Dead = defineComponent("dead", { defaults: { atTick: 0 } });
 export const Reloading = defineComponent("reloading", { defaults: { remaining: 0 } });
+export const Grenade = defineComponent("grenade", { defaults: {
+  owner: "", damage: 80, radius: 6, fuse: 2.5, impulse: 8,
+} });
 
 export interface WeaponDefinition {
   readonly id: string;
@@ -177,6 +180,81 @@ export function spawnProjectile(world: World, options: {
   });
 }
 
+export function throwGrenade(world: World, options: {
+  owner: EntityId;
+  position: [number, number, number];
+  velocity: [number, number, number];
+  damage?: number;
+  radius?: number;
+  fuse?: number;
+  impulse?: number;
+}): Entity {
+  return world.spawn()
+    .set(Transform, { position: options.position })
+    .set(Grenade, {
+      owner: options.owner,
+      ...(options.damage === undefined ? {} : { damage: options.damage }),
+      ...(options.radius === undefined ? {} : { radius: options.radius }),
+      ...(options.fuse === undefined ? {} : { fuse: options.fuse }),
+      ...(options.impulse === undefined ? {} : { impulse: options.impulse }),
+    })
+    .set(RigidBody, { type: "dynamic", velocity: options.velocity })
+    .set(Collider, { shape: "sphere", radius: .12 });
+}
+
+export interface ExplosionOptions {
+  damage: number;
+  radius: number;
+  impulse?: number;
+  instigator?: EntityId;
+  source?: EntityId;
+}
+
+export function explode(world: World, position: readonly [number, number, number], options: ExplosionOptions): void {
+  const impulse = options.impulse ?? 8;
+  for (const entity of world.query(Transform, Health, DamageInbox)) {
+    const distance = distanceTo(entity, position);
+    if (distance === undefined || distance > options.radius) continue;
+    queueDamage(entity, {
+      amount: Math.ceil(options.damage * (1 - distance / options.radius)),
+      type: "explosive", tags: ["explosion"],
+      ...(options.instigator === undefined ? {} : { instigator: options.instigator }),
+      ...(options.source === undefined ? {} : { source: options.source }),
+    });
+  }
+  for (const entity of world.query(Transform, RigidBody)) {
+    if (entity.id === options.source) continue;
+    const body = entity.get(RigidBody);
+    if (!body || body.type !== "dynamic") continue;
+    const distance = distanceTo(entity, position);
+    if (distance === undefined || distance > options.radius) continue;
+    const transform = entity.get(Transform)!;
+    const scale = impulse * (1 - distance / options.radius);
+    const direction = distance > 1e-6
+      ? transform.position.map((value, index) => (value - position[index]!) / distance) as [number, number, number]
+      : [0, 1, 0] as [number, number, number];
+    entity.set(RigidBody, { velocity: [
+      body.velocity[0] + direction[0] * scale,
+      body.velocity[1] + direction[1] * scale + scale * .3,
+      body.velocity[2] + direction[2] * scale,
+    ] });
+  }
+  world.events.emit("combat:explosion", {
+    position: [...position], radius: options.radius, damage: options.damage,
+    ...(options.instigator === undefined ? {} : { instigator: options.instigator }),
+  });
+}
+
+function distanceTo(entity: Entity, position: readonly [number, number, number]): number | undefined {
+  const transform = entity.get(Transform);
+  if (!transform) return undefined;
+  return Math.hypot(
+    transform.position[0] - position[0],
+    transform.position[1] - position[1],
+    transform.position[2] - position[2],
+  );
+}
+
 function worldPhysics(world: World): PhysicsAdapter {
   return world.service<PhysicsAdapter>("physics");
 }
@@ -187,7 +265,7 @@ export function combat() {
     setupWorld: (world) => {
       world.register(Health).register(Damageable).register(DamageInbox).register(Faction)
         .register(Ammo).register(Weapon).register(Inventory).register(Projectile).register(Dead)
-        .register(Reloading).register(Transform).register(RigidBody);
+        .register(Reloading).register(Grenade).register(Transform).register(RigidBody).register(Collider);
       world.addSystem({
         name: "combat.timers", phase: "fixedUpdate",
         before: ["combat.damage"],
@@ -209,6 +287,24 @@ export function combat() {
             entity.set(Ammo, { magazine: ammo.magazine + count, reserve: ammo.reserve - count });
             entity.remove(Reloading);
             world.events.emit("combat:reload", { entity: entity.id, count });
+          }
+        },
+      });
+      world.addSystem({
+        name: "combat.grenades", phase: "fixedUpdate",
+        before: ["combat.damage"],
+        run: ({ dt }) => {
+          for (const entity of world.query(Grenade, Transform)) {
+            const grenade = entity.get(Grenade);
+            const transform = entity.get(Transform);
+            if (!grenade || !transform) continue;
+            const fuse = grenade.fuse - dt;
+            if (fuse > 1e-9) { entity.set(Grenade, { fuse }); continue; }
+            entity.despawn();
+            explode(world, transform.position, {
+              damage: grenade.damage, radius: grenade.radius, impulse: grenade.impulse,
+              instigator: grenade.owner, source: entity.id,
+            });
           }
         },
       });

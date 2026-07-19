@@ -1,8 +1,8 @@
 import { createGame } from "@gameweave/core";
 import { physics } from "@gameweave/physics";
 import { describe, expect, it } from "vitest";
-import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, fire, fireDirection, fireHitscan, Health, hitscan, Projectile, projectile, queueDamage, reload, Reloading, spawnProjectile, Weapon } from "./index.js";
-import { Collider } from "@gameweave/physics";
+import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, explode, fire, fireDirection, fireHitscan, Health, hitscan, Projectile, projectile, queueDamage, reload, Reloading, spawnProjectile, throwGrenade, Weapon } from "./index.js";
+import { Collider, RigidBody } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
 it("settles queued weapon damage in fixed update", () => {
@@ -132,4 +132,43 @@ it("applies projectile damage only on impact and stops at obstacles", () => {
   expect(fireDirection(shooter, world, [0, 0, .7], [0, 0, 1])).toBeDefined();
   game.step(6);
   expect(target.get(Health)?.current).toBe(60);
+});
+
+it("explodes grenades on a deterministic fuse with distance falloff", () => {
+  const game = createGame({ fixedStep: .1 }).use(physics()).use(combat());
+  const world = game.createWorld("range");
+  const near = world.spawn({ id: "near" }).set(Transform, { position: [1, 0, 0] }).set(Health, {}).set(DamageInbox, {});
+  const far = world.spawn({ id: "far" }).set(Transform, { position: [4, 0, 0] }).set(Health, {}).set(DamageInbox, {});
+  const outside = world.spawn({ id: "outside" }).set(Transform, { position: [9, 0, 0] }).set(Health, {}).set(DamageInbox, {});
+  const events: unknown[] = [];
+  world.events.on("combat:explosion", (event) => events.push(event));
+
+  const grenade = throwGrenade(world, {
+    owner: "player", position: [0, 0, 0], velocity: [0, 0, 0], damage: 60, radius: 6, fuse: .5,
+  });
+  grenade.set(RigidBody, { gravityScale: 0 });
+  game.step(4);
+  expect(grenade.isAlive()).toBe(true);
+  expect(near.get(Health)?.current).toBe(100);
+  game.step(2);
+  expect(grenade.isAlive()).toBe(false);
+  expect(near.get(Health)?.current).toBe(100 - Math.ceil(60 * (1 - 1 / 6)));
+  expect(far.get(Health)?.current).toBe(100 - Math.ceil(60 * (1 - 4 / 6)));
+  expect(outside.get(Health)?.current).toBe(100);
+  expect(events).toHaveLength(1);
+});
+
+it("pushes dynamic bodies and destroys damageable props in the blast", () => {
+  const game = createGame({ fixedStep: .1 }).use(physics()).use(combat());
+  const world = game.createWorld("range");
+  const crate = world.spawn({ id: "crate" }).set(Transform, { position: [2, 0, 0] })
+    .set(RigidBody, { gravityScale: 0 }).set(Health, { current: 30, max: 30 }).set(DamageInbox, {});
+  const deaths: unknown[] = [];
+  world.events.on("combat:death", (event) => deaths.push(event));
+
+  explode(world, [0, 0, 0], { damage: 80, radius: 6, impulse: 10 });
+  game.step();
+  expect(crate.get(Health)?.current).toBe(0);
+  expect(deaths).toEqual([{ target: "crate" }]);
+  expect(crate.get(RigidBody)?.velocity[0]).toBeGreaterThan(3);
 });

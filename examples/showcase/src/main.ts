@@ -1,6 +1,6 @@
 import { CharacterMotor, Controller, InputManager, Ragdoll, activateRagdoll, character } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
-import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload } from "@gameweave/combat";
+import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload, throwGrenade } from "@gameweave/combat";
 import { AssetManager, assets, createGame, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
@@ -21,6 +21,7 @@ import {
   MeshStandardMaterial,
   Object3D,
   PCFSoftShadowMap,
+  PointLight,
   SphereGeometry,
   Vector3,
 } from "three";
@@ -120,9 +121,26 @@ async function start(): Promise<void> {
       return;
     }
     const entity = world.entity(target);
-    entity.set(BotController, { enabled: false });
-    entity.set(RigidBody, { lockRotations: false, velocity: [0, 2.2, 1.8] });
-    activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
+    if (entity.has(BotController)) {
+      entity.set(BotController, { enabled: false });
+      entity.set(RigidBody, { lockRotations: false, velocity: [0, 2.2, 1.8] });
+      activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
+      return;
+    }
+    // 可破坏物：碎裂后移除
+    const position = entity.get(Transform)?.position;
+    if (position) effects.burst(position, "dust", 22);
+    entity.despawn();
+  });
+  world.events.on("combat:explosion", (event) => {
+    const { position } = event as { position?: [number, number, number] };
+    if (!position) return;
+    effects.explosion(position);
+    const playerPosition = player.get(Transform)?.position;
+    if (playerPosition) {
+      const distance = Math.hypot(...position.map((value, index) => value - playerPosition[index]!));
+      effects.rumble(Math.max(0, 1 - distance / 16));
+    }
   });
   world.events.on("combat:fire", (event) => {
     const { projectile } = event as { projectile?: unknown };
@@ -162,9 +180,26 @@ async function start(): Promise<void> {
   document.addEventListener("pointerlockchange", () => {
     element("runtime-state").textContent = document.pointerLockElement === canvas ? "FPS CONTROL ACTIVE" : "CLICK TO ENGAGE";
   });
+  let grenades = 3;
+  const updateGrenades = () => element("grenades").textContent = String(grenades);
   addEventListener("keydown", ({ code, repeat }) => {
     if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = "RELOADING";
-    if (code === "KeyT" && !repeat) resetRange(world, player);
+    if (code === "KeyT" && !repeat) { resetRange(world, player, config); grenades = 3; updateGrenades(); }
+    if (code === "KeyG" && !repeat && grenades > 0 && !player.has(Dead)) {
+      const directionVector = rendererPlugin.adapter.camera.getWorldDirection(new Vector3());
+      const bodyTransform = player.get(Transform);
+      if (!bodyTransform) return;
+      const origin = new Vector3(...bodyTransform.position).add(new Vector3(0, .72, 0)).addScaledVector(directionVector, .6);
+      throwGrenade(world, {
+        owner: player.id,
+        position: [origin.x, origin.y, origin.z],
+        velocity: [directionVector.x * 13, directionVector.y * 13 + 4.5, directionVector.z * 13],
+        damage: 90, radius: 5.5, fuse: 2.2, impulse: 9,
+      }).set(Renderable, { asset: "grenade" });
+      grenades -= 1;
+      updateGrenades();
+      element("runtime-state").textContent = "FRAG OUT";
+    }
     if (code === "KeyV" && !repeat) {
       thirdPerson = !thirdPerson;
       if (thirdPerson) player.set(Renderable, { asset: "operator" });
@@ -229,6 +264,12 @@ function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("target", () => createSoldier());
   adapter.registerAsset("operator", () => createSoldier({ armor: 0x35608a, visor: 0x8fb6dd }));
   adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
+  adapter.registerAsset("grenade", () => {
+    const body = mesh(new SphereGeometry(.12, 10, 8), 0x3a4a35, { cast: true, metalness: .3 });
+    body.add(mesh(new BoxGeometry(.06, .08, .06), 0x8a8f85, { metalness: .5 }));
+    (body.children[0] as Object3D).position.y = .14;
+    return body;
+  });
 }
 
 function mesh(geometry: BufferGeometry, color: number, options: { cast?: boolean; receive?: boolean; rotateX?: number; metalness?: number } = {}): Object3D {
@@ -315,17 +356,23 @@ function part<T extends Object3D>(
   return object;
 }
 
+function spawnBarrier(world: World, index: number, position: readonly [number, number, number]): void {
+  world.spawn({ id: `barrier-${index}` }).set(Transform, { position: [...position] }).set(Renderable, { asset: "barrier" })
+    .set(RigidBody, { type: "static" }).set(Collider, { size: [3.5, 2, .65] })
+    .set(Health, { current: 120, max: 120 }).set(DamageInbox, {});
+}
+
+function spawnCrate(world: World, index: number, position: readonly [number, number, number]): void {
+  world.spawn({ id: `crate-${index}` }).set(Transform, { position: [...position] }).set(Renderable, { asset: "crate" })
+    .set(RigidBody, {}).set(Collider, { size: [1, 1, 1] })
+    .set(Health, { current: 40, max: 40 }).set(DamageInbox, {});
+}
+
 function buildArena(world: World, config: ArenaConfig): Entity {
   world.spawn({ id: "ground" }).set(Transform, {}).set(Renderable, { asset: "ground" })
     .set(RigidBody, { type: "static" }).set(Collider, { size: [40, .02, 40] });
-  for (const [index, position] of config.barriers.entries()) {
-    world.spawn({ id: `barrier-${index}` }).set(Transform, { position }).set(Renderable, { asset: "barrier" })
-      .set(RigidBody, { type: "static" }).set(Collider, { size: [3.5, 2, .65] });
-  }
-  for (const [index, position] of config.crates.entries()) {
-    world.spawn({ id: `crate-${index}` }).set(Transform, { position }).set(Renderable, { asset: "crate" })
-      .set(RigidBody, {}).set(Collider, { size: [1, 1, 1] });
-  }
+  for (const [index, position] of config.barriers.entries()) spawnBarrier(world, index, position);
+  for (const [index, position] of config.crates.entries()) spawnCrate(world, index, position);
   for (const [index, position] of config.targets.entries()) {
     world.spawn({ id: `target-${index}` }).set(Transform, { position }).set(Renderable, { asset: "target" })
       .set(RigidBody, { type: "dynamic", lockRotations: true }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
@@ -358,23 +405,49 @@ function createEffects(adapter: ReturnType<typeof three>["adapter"]) {
   const materials = {
     flesh: new MeshStandardMaterial({ color: 0xe0523a, emissive: 0x99200f, emissiveIntensity: 1.3, roughness: .55 }),
     dust: new MeshStandardMaterial({ color: 0x99a08f, roughness: .95 }),
+    blast: new MeshStandardMaterial({ color: 0xffb347, emissive: 0xd96a1f, emissiveIntensity: 2.2, roughness: .4 }),
   };
   const particles: ImpactParticle[] = [];
+  const lights: { light: PointLight; life: number; ttl: number }[] = [];
   const flashes = new Map<string, { materials: readonly MeshStandardMaterial[]; strength: number }>();
   let shake = 0;
+
+  const emit = (
+    point: readonly [number, number, number],
+    normal: readonly [number, number, number],
+    kind: keyof typeof materials,
+    count: number,
+    speed: number,
+  ): void => {
+    for (let index = 0; index < count; index += 1) {
+      const mesh = new Mesh(geometry, materials[kind]);
+      mesh.position.set(...point);
+      mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+      const velocity = new Vector3(...normal).multiplyScalar(speed * (.45 + Math.random() * .55))
+        .add(new Vector3(Math.random() - .5, Math.random() - .2, Math.random() - .5).multiplyScalar(speed * .65));
+      adapter.scene.add(mesh);
+      particles.push({ mesh, velocity, life: 0, ttl: .28 + Math.random() * .22 });
+    }
+  };
 
   return {
     get shake() { return shake; },
     impact(point: readonly [number, number, number], normal: readonly [number, number, number], kind: "flesh" | "dust"): void {
-      for (let index = 0; index < 9; index += 1) {
-        const mesh = new Mesh(geometry, materials[kind]);
-        mesh.position.set(...point);
-        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
-        const velocity = new Vector3(...normal).multiplyScalar(2.2 + Math.random() * 2.6)
-          .add(new Vector3(Math.random() - .5, Math.random() - .2, Math.random() - .5).multiplyScalar(3.2));
-        adapter.scene.add(mesh);
-        particles.push({ mesh, velocity, life: 0, ttl: .28 + Math.random() * .22 });
-      }
+      emit(point, normal, kind, 9, 4.8);
+    },
+    burst(point: readonly [number, number, number], kind: "flesh" | "dust", count: number): void {
+      emit(point, [0, 1, 0], kind, count, 6.5);
+    },
+    explosion(point: readonly [number, number, number]): void {
+      emit(point, [0, 1, 0], "blast", 30, 11);
+      emit(point, [0, 1, 0], "dust", 14, 7);
+      const light = new PointLight(0xffa040, 40, 14, 1.6);
+      light.position.set(point[0], point[1] + .4, point[2]);
+      adapter.scene.add(light);
+      lights.push({ light, life: 0, ttl: .18 });
+    },
+    rumble(strength: number): void {
+      shake = Math.min(1, shake + strength);
     },
     flash(entity: string): void {
       const existing = flashes.get(entity);
@@ -395,6 +468,16 @@ function createEffects(adapter: ReturnType<typeof three>["adapter"]) {
     },
     update(dt: number): void {
       shake = Math.max(0, shake - dt * 2.4);
+      for (let index = lights.length - 1; index >= 0; index -= 1) {
+        const entry = lights[index]!;
+        entry.life += dt;
+        if (entry.life >= entry.ttl) {
+          adapter.scene.remove(entry.light);
+          lights.splice(index, 1);
+          continue;
+        }
+        entry.light.intensity = 40 * (1 - entry.life / entry.ttl);
+      }
       for (let index = particles.length - 1; index >= 0; index -= 1) {
         const particle = particles[index]!;
         particle.life += dt;
@@ -584,9 +667,8 @@ function shootCrosshair(
   element("runtime-state").textContent = "ROUND FIRED";
 }
 
-function resetRange(world: World, player: Entity): void {
-  for (const target of world.query(Health)) {
-    if (target.id === player.id) continue;
+function resetRange(world: World, player: Entity, config: ArenaConfig): void {
+  for (const target of world.query(Health, BotController)) {
     target.set(Health, { current: 40 });
     target.set(Transform, { visible: true });
     if (!target.has(Collider)) target.set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 });
@@ -594,6 +676,14 @@ function resetRange(world: World, player: Entity): void {
     target.set(Ragdoll, { active: false, elapsed: 0 });
     target.set(RigidBody, { lockRotations: true, velocity: [0, 0, 0] });
     target.set(BotController, { enabled: true });
+  }
+  for (const [index, position] of config.barriers.entries()) {
+    if (world.hasEntity(`barrier-${index}`)) world.entity(`barrier-${index}`).set(Health, { current: 120 }).set(Transform, { position: [...position] });
+    else spawnBarrier(world, index, position);
+  }
+  for (const [index, position] of config.crates.entries()) {
+    if (world.hasEntity(`crate-${index}`)) world.entity(`crate-${index}`).set(Health, { current: 40 }).set(Transform, { position: [...position] }).set(RigidBody, { velocity: [0, 0, 0] });
+    else spawnCrate(world, index, position);
   }
   player.set(Ammo, { magazine: 12, reserve: 48 });
   player.set(Health, { current: 100 });
