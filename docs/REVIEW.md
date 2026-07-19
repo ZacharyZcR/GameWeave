@@ -73,11 +73,18 @@ Open questions
 - 推荐修改
 - 推荐方案的代价
 
+## 已裁决（欢迎评审挑战裁决本身）
+
+- facade 写路径：所有 facade 方法糖化为 Component 写入或消息入队，在 System 阶段结算，无第二条写路径
+- Transform/Object3D：Transform 单向权威，托管字段只读，`ManualTransform` 显式 opt-out
+- 确定性分层：核心模拟跨环境确定，物理同机同版本可回归，渲染不承诺
+- 输入录制以 fixed tick 为单位，回放对齐 tick 序列
+- Controller 是 Component，InputSource 通过注册名引用
+
 ## 当前已知争议
 
-- 面向对象 facade 与纯 ECS API 的边界
 - runtime schema 的依赖和性能成本
 - Prefab override 的复杂度上限
-- Transform/Object3D 的单向同步策略
 - 事件总线与 typed data channel 的边界
 - AI 友好与普通开发者体验是否需要不同 API
+- `ManualTransform` opt-out 的粒度（整个变换还是逐字段）

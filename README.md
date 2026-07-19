@@ -4,7 +4,7 @@
 
 GameWeave（中文暂定“织界”）是一个建立在 Three.js 之上的模块化游戏逻辑库。它把角色、武器、AI、载具、规则、存档和调试能力封装成可组合、可检查、适合人类与 AI 生成的 TypeScript API。
 
-项目目前处于设计阶段，尚未进入实现。
+项目当前完成 0.1.0 本地发布候选：八个库包、两个浏览器游戏切片和一套 12 项 AI 修改验收。0.x API 仍可能调整，尚未发布到 npm。
 
 ## 定位
 
@@ -31,10 +31,16 @@ GameWeave 不是：
 - [API 草案](docs/API.md)
 - [路线图](docs/ROADMAP.md)
 - [评审指南](docs/REVIEW.md)
+- [核心术语](docs/GLOSSARY.md)
+- [样本分析](docs/SAMPLE_ANALYSIS.md)
+- [AI 修改任务集](docs/AI_TASKS.md)
+- [迁移报告](docs/MIGRATION_REPORT.md)
+- [0.1.0 发布决策](docs/RELEASE.md)
+- [0.1.0 完成审计](docs/COMPLETION_AUDIT.md)
 
 ## 当前状态
 
-当前目标是先验证抽象边界，再开始编码。第一个 vertical slice 将从已有 Three.js 游戏中提取以下重复逻辑：
+当前实现已从已有 Three.js 游戏中提取以下重复逻辑：
 
 1. Game loop 与 World
 2. Entity、Component 与 System
@@ -44,6 +50,30 @@ GameWeave 不是：
 6. HUD 状态绑定
 7. 结构化 Inspector 与确定性测试
 
+当前可用的开发命令：
+
+```bash
+npm install
+npm run typecheck
+npm test
+npm run build
+```
+
+当前 workspace：
+
+```text
+@gameweave/core       模拟核心、序列化、Plugin、Prefab
+@gameweave/three      Three.js 表现与资产适配
+@gameweave/physics    物理协议与基础 adapter
+@gameweave/character  输入、角色移动与相机数据
+@gameweave/combat     生命、伤害、武器与弹药
+@gameweave/bots       感知、目标、状态与行为
+@gameweave/ui         DOM 状态绑定与屏幕投影
+@gameweave/debug      Inspector、输入录制与 Scenario
+```
+
+可构建的浏览器 FPS vertical slice 位于 `examples/fps`。
+
 ## License
 
-尚未决定。
+MIT，见 [LICENSE](LICENSE)。

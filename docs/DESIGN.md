@@ -55,6 +55,14 @@ Entity 是身份和组件容器，能力由 Component 组合，批量逻辑由 S
 
 固定 timestep、显式随机种子、输入记录和逐帧推进是一等能力，使 bug 可以复现、测试和回归。
 
+确定性承诺分三层，避免形成虚假保证：
+
+- 核心模拟（clock、seeded random、command buffer、纯 GameWeave System）：跨环境确定
+- 物理：取决于 adapter，只承诺同机同版本可回归
+- 渲染：不承诺
+
+精确数值断言只对第一层成立。
+
 ### 3.7 Replaceable subsystems
 
 渲染、物理、导航、音频和网络通过 adapter/plugin 接入。玩法模块不能绑死具体物理库。
@@ -62,6 +70,8 @@ Entity 是身份和组件容器，能力由 Component 组合，批量逻辑由 S
 ### 3.8 Escape hatches
 
 不隐藏 Three.js。高级用户可以访问底层 `Object3D`、`Scene`、`Camera` 和 `WebGLRenderer/WebGPURenderer`。
+
+变换的事实源是 `Transform` 组件，render 阶段单向写入 `Object3D`。由 GameWeave 管理的字段（position、quaternion、scale、visible）视为只读；开发模式下同步系统检测到外部篡改时报 invariant 错误。需要完全接管某个实体的变换，使用显式 opt-out（如 `ManualTransform` 标记），而不是绕过同步偷偷写。
 
 ### 3.9 Pay only for what you use
 
@@ -126,6 +136,10 @@ Game
 
 稳定 ID 与便捷 facade。它不是行为继承树，也不拥有独立 game loop。
 
+facade 方法全部是语法糖：每个方法定义为对 Component 的写入或消息入队，效果在对应 System 的阶段结算。例如 `entity.damage(x)` 等价于写入 `DamageInbox`，在下一个 `fixedUpdate` 生效。不存在绕过 System 的第二条写路径。
+
+despawn 之后 handle 失效：`isAlive()` 返回 false，`get()` 返回 undefined，写操作在开发模式报错。
+
 ### Component
 
 附着在 Entity 上的类型化状态。应尽量是可序列化数据；资源句柄和运行时对象通过 adapter 管理。
@@ -167,6 +181,8 @@ postRender
 - System 顺序必须显式声明或由依赖拓扑产生。
 - 普通 Component 不自动获得 `update()`。
 - Entity 的 spawn/despawn 在阶段边界提交，避免遍历时修改集合。
+- Query 结果在单个 System 执行期间是稳定快照，结构变更在阶段边界后可见。
+- 输入以 fixed tick 为单位快照与录制；回放对齐 tick 序列，而不是渲染帧。
 
 ## 7. 控制与角色分离
 
@@ -181,16 +197,23 @@ GameWeave 区分：
 
 ## 8. Gameplay primitives
 
-首批候选原语：
+原语分两档，遵守 3.10：
+
+slice 必需（由 FPS vertical slice 直接验证）：
 
 ```text
 Transform        Renderable       Collider
 RigidBody        CharacterMotor   Controller
 Health           Damageable       Faction
 Weapon           Ammo             Projectile
-Hitscan          Explosion        Inventory
-Sensor           Targeting        NavigationAgent
-StateMachine     Behavior         Ability
+Hitscan          Inventory        Sensor
+Targeting        NavigationAgent  StateMachine
+```
+
+候选（在至少两个真实游戏中出现前不进入通用层）：
+
+```text
+Explosion        Behavior         Ability
 Effect           Cooldown         Interactable
 ```
 
@@ -200,7 +223,7 @@ Effect           Cooldown         Interactable
 
 要求：
 
-- schema 有版本号
+- schema 有版本号：`$schema` 标识格式家族，`version` 是迁移序号，迁移逻辑只看 `version`
 - Entity 引用使用稳定 ID，不保存内存引用
 - Component 数据可以独立迁移
 - runtime-only 字段明确标记
@@ -261,7 +284,7 @@ Effect           Cooldown         Interactable
 @gameweave/physics    物理抽象与首个 adapter
 @gameweave/character  角色移动、控制器和相机
 @gameweave/combat     生命、伤害、武器和投射物
-@gameweave/ai         感知、目标、导航和行为
+@gameweave/bots       感知、目标、导航和行为
 @gameweave/ui         DOM 状态绑定与屏幕投影
 @gameweave/debug      Inspector、录制、回放和性能数据
 ```
