@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#121312">
     <title>GameWeave / Physics Range</title>
     <link rel="stylesheet" href="/src/style.css">
+    <style>.curtain.done{pointer-events:none}</style>
   </head>
   <body>
     <main id="app">
@@ -22,10 +23,12 @@
         <div class="runtime"><span id="runtime-state">INITIALIZING</span><b id="fps">0 FPS</b></div>
       </header>
       <aside class="telemetry" aria-label="运行状态">
-        <div><span>目标</span><strong id="targets">0</strong></div>
+        <div><span>敌方 AI</span><strong id="targets">0</strong></div>
+        <div><span>生命</span><strong id="health">100</strong></div>
         <div><span>弹药</span><strong id="ammo">12</strong></div>
         <div><span>碰撞事件</span><strong id="collisions">0</strong></div>
         <div><span>接地</span><strong id="grounded">NO</strong></div>
+        <div><span>AI 状态</span><strong id="ai-state">IDLE</strong></div>
       </aside>
       <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
       <div id="hit-marker" class="hit-marker" aria-hidden="true"></div>

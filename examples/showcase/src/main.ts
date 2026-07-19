@@ -1,5 +1,6 @@
 import { CharacterMotor, Controller, InputManager, character } from "@gameweave/character";
-import { Ammo, DamageInbox, Dead, Health, Weapon, combat, fire } from "@gameweave/combat";
+import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
+import { Ammo, DamageInbox, Dead, Faction, Health, Weapon, combat, fire } from "@gameweave/combat";
 import { AssetManager, assets, createGame, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
@@ -40,6 +41,7 @@ const element = <T extends HTMLElement>(id: string) => {
 const loading = element<HTMLElement>("loading");
 const loadingState = element<HTMLElement>("loading-state");
 const progress = element<HTMLElement>("load-progress");
+progress.style.width = "100%";
 const errorScreen = element<HTMLElement>("error");
 const errorMessage = element<HTMLElement>("error-message");
 element<HTMLButtonElement>("retry").addEventListener("click", () => location.reload());
@@ -96,7 +98,7 @@ async function start(): Promise<void> {
   });
   const game = createGame({ fixedStep: 1 / 60, seed: "physics-range" })
     .use(assets(assetManager)).use(rendererPlugin).use(physics(physicsAdapter))
-    .use(character(input)).use(combat()).use(debug());
+    .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
   installDemoSystems(world, rendererPlugin.adapter, player, viewModel, () => ({ yaw, pitch }));
@@ -110,7 +112,12 @@ async function start(): Promise<void> {
   world.events.on("combat:death", (event) => {
     const { target } = event as { target?: unknown };
     if (typeof target !== "string" || !world.hasEntity(target)) return;
+    if (target === player.id) {
+      element("runtime-state").textContent = "OPERATOR DOWN - PRESS R";
+      return;
+    }
     const entity = world.entity(target);
+    entity.set(BotController, { enabled: false });
     entity.set(Transform, { visible: false });
     entity.remove(Collider);
   });
@@ -130,6 +137,8 @@ async function start(): Promise<void> {
 
   await game.start(world);
   loading.classList.add("done");
+  loading.addEventListener("transitionend", () => loading.remove(), { once: true });
+  setTimeout(() => loading.remove(), 600);
   element("runtime-state").textContent = "RAPIER ONLINE";
 
   let previous = performance.now(), sampledAt = previous, frames = 0;
@@ -261,12 +270,16 @@ function buildArena(world: World, config: ArenaConfig): Entity {
   }
   for (const [index, position] of config.targets.entries()) {
     world.spawn({ id: `target-${index}` }).set(Transform, { position }).set(Renderable, { asset: "target" })
-      .set(RigidBody, { type: "static" }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
-      .set(Health, { current: 40, max: 40 }).set(DamageInbox, {});
+      .set(RigidBody, { type: "dynamic", lockRotations: true }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
+      .set(Health, { current: 40, max: 40 }).set(DamageInbox, {}).set(Faction, { id: "red" })
+      .set(Sensor, { sight: 32, hearing: 18 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 7 })
+      .set(StateMachine, {}).set(BotController, {}).set(Weapon, { id: "ai-rifle", damage: 8, cooldown: .75, range: 28 })
+      .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 });
   }
   return world.spawn({ id: "player" }).set(Transform, { position: [0, 1.01, 5] })
     .set(RigidBody, { type: "kinematic", gravityScale: 0 }).set(Collider, { shape: "capsule", halfHeight: .5, radius: .5 })
     .set(CharacterMotor, { speed: 5.2, sprintSpeed: 8.5, jumpSpeed: 6.2, gravity: 16 }).set(Controller, { input: "range" })
+    .set(Health, { current: 100, max: 100 }).set(DamageInbox, {}).set(Faction, { id: "blue" })
     .set(Weapon, { id: "range-rifle", damage: 40, cooldown: .18, range: 40 }).set(Ammo, { magazine: 12, reserve: 0, capacity: 12 });
 }
 
@@ -305,9 +318,13 @@ function bindTelemetry(world: World, player: Entity): void {
   world.addSystem({
     name: "showcase.telemetry", phase: "postRender",
     run: () => {
-      element("targets").textContent = String([...world.query(Health)].filter((target) => (target.get(Health)?.current ?? 0) > 0).length);
+      const activeBots = [...world.query(BotController)].filter((bot) => bot.get(BotController)?.enabled);
+      const states = activeBots.map((bot) => bot.get(StateMachine)?.state ?? "idle");
+      element("targets").textContent = String(activeBots.length);
+      element("health").textContent = String(player.get(Health)?.current ?? 0);
       element("ammo").textContent = String(player.get(Ammo)?.magazine ?? 0);
       element("grounded").textContent = player.get(CharacterMotor)?.grounded ? "YES" : "NO";
+      element("ai-state").textContent = states.includes("attack") ? "ATTACK" : states.includes("chase") ? "CHASE" : "IDLE";
     },
   });
 }
@@ -326,6 +343,8 @@ function shootCrosshair(
   const hit = adapter.raycast(world, origin, direction, 40);
   const hitTarget = hit && world.hasEntity(hit.entity) ? world.entity(hit.entity) : undefined;
   const successful = !!hitTarget?.has(Health) && fire(player, hitTarget, world);
+  const transform = player.get(Transform);
+  if (transform) emitNoise(world, { source: player.id, faction: "blue", position: transform.position, radius: 20 });
   if ((player.get(Weapon)?.cooldownRemaining ?? 0) > 0) viewModel.userData.recoil = 1;
   element("runtime-state").textContent = successful ? "TARGET HIT" : hit ? "SURFACE HIT" : "MISS";
   if (successful) {
@@ -338,12 +357,16 @@ function shootCrosshair(
 
 function resetRange(world: World, player: Entity): void {
   for (const target of world.query(Health)) {
+    if (target.id === player.id) continue;
     target.set(Health, { current: 40 });
     target.set(Transform, { visible: true });
     if (!target.has(Collider)) target.set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 });
     if (target.has(Dead)) target.remove(Dead);
+    target.set(BotController, { enabled: true });
   }
   player.set(Ammo, { magazine: 12 });
+  player.set(Health, { current: 100 });
+  if (player.has(Dead)) player.remove(Dead);
   element("runtime-state").textContent = "RANGE RESET";
 }
 

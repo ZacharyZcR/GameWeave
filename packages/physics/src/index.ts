@@ -18,6 +18,7 @@ export const RigidBody = defineComponent("rigidBody", {
     type: "dynamic" as "dynamic" | "kinematic" | "static",
     velocity: [0, 0, 0] as [number, number, number],
     gravityScale: 1,
+    lockRotations: false,
   },
 });
 

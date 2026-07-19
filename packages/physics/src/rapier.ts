@@ -152,7 +152,7 @@ export class RapierPhysicsAdapter implements CharacterPhysicsAdapter {
           : RAPIER.RigidBodyDesc.kinematicPositionBased();
         desc.setTranslation(...transform.position).setRotation({
           x: transform.quaternion[0], y: transform.quaternion[1], z: transform.quaternion[2], w: transform.quaternion[3],
-        }).setLinvel(...bodyData.velocity).setGravityScale(bodyData.gravityScale);
+        }).setLinvel(...bodyData.velocity).setGravityScale(bodyData.gravityScale).lockRotations(bodyData.lockRotations);
         const body = native.createRigidBody(desc);
         const colliderDesc = colliderData.shape === "sphere"
           ? RAPIER.ColliderDesc.ball(colliderData.radius)
@@ -168,6 +168,7 @@ export class RapierPhysicsAdapter implements CharacterPhysicsAdapter {
         this.#entities.set(collider.handle, entity.id);
       }
       entry.body.setGravityScale(bodyData.gravityScale, true);
+      entry.body.lockRotations(bodyData.lockRotations, true);
       if (bodyData.type === "dynamic") entry.body.setLinvel({ x: bodyData.velocity[0], y: bodyData.velocity[1], z: bodyData.velocity[2] }, true);
       if (bodyData.type === "static") {
         entry.body.setTranslation({ x: transform.position[0], y: transform.position[1], z: transform.position[2] }, false);

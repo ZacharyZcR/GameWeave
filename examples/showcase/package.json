@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": { "build": "vite build", "dev": "vite", "typecheck": "tsc -p tsconfig.json --noEmit" },
   "dependencies": {
+    "@gameweave/bots": "^0.1.0",
     "@gameweave/character": "^0.1.0",
     "@gameweave/combat": "^0.1.0",
     "@gameweave/core": "^0.1.0",
