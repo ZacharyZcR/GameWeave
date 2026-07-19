@@ -194,6 +194,8 @@ queueDamage(target, {
 
 `queueDamage()` 向 `DamageInbox` 入队，在下一个 `fixedUpdate` 由 `combat.damage` 结算。调用后立即读 `Health` 拿到的仍是旧值。`fire()`、`fireHitscan()`、`reload(entity, world)` 和 `spawnProjectile()` 是同一数据路径上的便捷函数；reload 与 projectile lifetime 都使用 fixed simulation time。
 
+Projectile 武器不会在扣弹时提前结算伤害。`fireDirection()` 只生成弹丸；`combat.projectiles` 在每个 fixed tick 对本帧位移执行 swept raycast。弹丸碰到的第一个 collider 会终止它，只有该实体同时具备 `Health` 与 `DamageInbox` 才会产生伤害。因此高速弹丸不会穿透薄墙，障碍物也不会被误写入伤害组件。
+
 ## 8. AI
 
 预设入口：

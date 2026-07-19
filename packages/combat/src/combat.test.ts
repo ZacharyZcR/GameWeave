@@ -1,7 +1,7 @@
 import { createGame } from "@gameweave/core";
 import { physics } from "@gameweave/physics";
 import { describe, expect, it } from "vitest";
-import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, fire, fireHitscan, Health, hitscan, Projectile, queueDamage, reload, Reloading, spawnProjectile, Weapon } from "./index.js";
+import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, fire, fireDirection, fireHitscan, Health, hitscan, Projectile, projectile, queueDamage, reload, Reloading, spawnProjectile, Weapon } from "./index.js";
 import { Collider } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
@@ -97,4 +97,29 @@ it("spawns configured projectiles from inside a fixed update system", () => {
   game.step(2);
   const [projectile] = world.query(Projectile, Transform).snapshot();
   expect(projectile?.get(Transform)?.position[2]).toBe(2);
+});
+
+it("applies projectile damage only on impact and stops at obstacles", () => {
+  const game = createGame({ fixedStep: .1 }).use(physics()).use(combat());
+  const world = game.createWorld("range");
+  const weapon = defineWeapon("launcher", {
+    delivery: projectile({ speed: 10, range: 20 }), magazineSize: 2,
+    damage: { amount: 40, type: "ballistic" },
+  });
+  const shooter = equipWeapon(world.spawn({ id: "shooter" }).set(Transform, {}), weapon);
+  const barrier = world.spawn({ id: "barrier" }).set(Transform, { position: [0, 0, 2] })
+    .set(Collider, { shape: "sphere", radius: .5 });
+  const target = world.spawn({ id: "target" }).set(Transform, { position: [0, 0, 4] })
+    .set(Collider, { shape: "sphere", radius: .5 }).set(Health, {}).set(DamageInbox, {});
+
+  expect(fireDirection(shooter, world, [0, 0, .7], [0, 0, 1])).toBeDefined();
+  expect(target.get(Health)?.current).toBe(100);
+  game.step(4);
+  expect(target.get(Health)?.current).toBe(100);
+
+  barrier.despawn();
+  shooter.set(Weapon, { cooldownRemaining: 0 });
+  expect(fireDirection(shooter, world, [0, 0, .7], [0, 0, 1])).toBeDefined();
+  game.step(6);
+  expect(target.get(Health)?.current).toBe(60);
 });

@@ -74,7 +74,7 @@ npm run build
 
 可构建的浏览器示例：
 
-- `examples/showcase`：可玩 FPS，集中展示资源预加载、胶囊角色、刚体堆叠、碰撞事件、raycast，以及具备感知、追踪和攻击状态的敌方 AI。
+- `examples/showcase`：可玩 FPS，集中展示资源预加载、胶囊角色、刚体堆叠、碰撞事件、swept projectile，以及具备感知、追踪和攻击状态的敌方 AI。
 - `examples/fps`：最小 FPS vertical slice。
 - `examples/steel-front-slice`：现有游戏迁移切片。
 

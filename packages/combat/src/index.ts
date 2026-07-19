@@ -22,9 +22,13 @@ export const Ammo = defineComponent("ammo", { defaults: { magazine: 30, reserve:
 export const Weapon = defineComponent("weapon", { defaults: {
   id: "", fireMode: "semi" as "semi" | "automatic", damage: 10, damageType: "generic",
   cooldown: 0.2, cooldownRemaining: 0, reloadTime: 2, range: 300, spread: 0,
+  delivery: "hitscan" as "hitscan" | "projectile", projectileSpeed: 32,
 } });
 export const Inventory = defineComponent("inventory", { defaults: { items: [] as string[], equipped: "" } });
-export const Projectile = defineComponent("projectile", { defaults: { damage: 10, speed: 20, owner: "", lifetime: 5, direction: [0, 0, 1] as [number, number, number] } });
+export const Projectile = defineComponent("projectile", { defaults: {
+  damage: 10, damageType: "generic", speed: 20, owner: "", lifetime: 5,
+  direction: [0, 0, 1] as [number, number, number],
+} });
 export const Dead = defineComponent("dead", { defaults: { atTick: 0 } });
 export const Reloading = defineComponent("reloading", { defaults: { remaining: 0 } });
 
@@ -35,7 +39,11 @@ export interface WeaponDefinition {
 }
 
 export function hitscan(options: { range?: number; spread?: number } = {}) {
-  return { range: options.range ?? 300, spread: options.spread ?? 0 };
+  return { type: "hitscan" as const, range: options.range ?? 300, spread: options.spread ?? 0 };
+}
+
+export function projectile(options: { speed?: number; range?: number } = {}) {
+  return { type: "projectile" as const, speed: options.speed ?? 32, range: options.range ?? 300 };
 }
 
 export function defineWeapon(id: string, options: {
@@ -44,7 +52,7 @@ export function defineWeapon(id: string, options: {
   magazineSize?: number;
   reserve?: number;
   reloadTime?: number;
-  delivery?: ReturnType<typeof hitscan>;
+  delivery?: ReturnType<typeof hitscan> | ReturnType<typeof projectile>;
   damage: { amount: number; type: string };
 }): WeaponDefinition {
   if (!id.trim()) throw new Error("Weapon id must not be empty");
@@ -54,7 +62,9 @@ export function defineWeapon(id: string, options: {
       id, fireMode: options.fireMode ?? "semi", damage: options.damage.amount,
       damageType: options.damage.type, cooldown: 60 / (options.roundsPerMinute ?? 300),
       reloadTime: options.reloadTime ?? 2, range: options.delivery?.range ?? 300,
-      spread: options.delivery?.spread ?? 0,
+      spread: options.delivery?.type === "hitscan" ? options.delivery.spread : 0,
+      delivery: options.delivery?.type ?? "hitscan",
+      projectileSpeed: options.delivery?.type === "projectile" ? options.delivery.speed : 32,
     },
     ammo: { magazine: options.magazineSize ?? 30, capacity: options.magazineSize ?? 30, reserve: options.reserve ?? 90 },
   });
@@ -82,15 +92,44 @@ export function queueDamage(target: Entity, message: DamageInput): void {
 }
 
 export function fire(shooter: Entity, target: Entity, world: World): boolean {
-  const weapon = shooter.get(Weapon);
-  const ammo = shooter.get(Ammo);
-  if (!weapon || !ammo || shooter.has(Reloading) || ammo.magazine <= 0) return false;
-  if (weapon.cooldownRemaining > 0) return false;
-  shooter.set(Weapon, { cooldownRemaining: weapon.cooldown });
-  shooter.set(Ammo, { magazine: ammo.magazine - 1 });
-  queueDamage(target, { amount: weapon.damage, type: weapon.damageType, source: shooter.id, instigator: shooter.id, weapon: weapon.id });
-  world.events.emit("combat:fire", { shooter: shooter.id, target: target.id, weapon: weapon.id });
+  const weapon = consumeShot(shooter);
+  if (!weapon) return false;
+  let projectileEntity: Entity | undefined;
+  if (weapon.delivery === "projectile") {
+    const from = shooter.get(Transform)?.position, to = target.get(Transform)?.position;
+    if (!from || !to) return false;
+    const direction = normalize(to.map((value, index) => value - from[index]!) as [number, number, number]);
+    const position = from.map((value, index) => value + direction[index]! * .7) as [number, number, number];
+    position[1] += .4;
+    projectileEntity = spawnProjectile(world, {
+      owner: shooter.id, position, direction, speed: weapon.projectileSpeed,
+      damage: weapon.damage, damageType: weapon.damageType, lifetime: weapon.range / weapon.projectileSpeed,
+    });
+  } else {
+    queueDamage(target, { amount: weapon.damage, type: weapon.damageType, source: shooter.id, instigator: shooter.id, weapon: weapon.id });
+  }
+  world.events.emit("combat:fire", {
+    shooter: shooter.id, target: target.id, weapon: weapon.id,
+    ...(projectileEntity ? { projectile: projectileEntity.id } : {}),
+  });
   return true;
+}
+
+export function fireDirection(
+  shooter: Entity,
+  world: World,
+  origin: [number, number, number],
+  direction: [number, number, number],
+): Entity | undefined {
+  const weapon = consumeShot(shooter);
+  if (!weapon) return undefined;
+  const projectileEntity = spawnProjectile(world, {
+    owner: shooter.id, position: origin, direction: normalize(direction),
+    speed: weapon.projectileSpeed, damage: weapon.damage, damageType: weapon.damageType,
+    lifetime: weapon.range / weapon.projectileSpeed,
+  });
+  world.events.emit("combat:fire", { shooter: shooter.id, weapon: weapon.id, projectile: projectileEntity.id });
+  return projectileEntity;
 }
 
 export function fireHitscan(
@@ -123,12 +162,13 @@ export function spawnProjectile(world: World, options: {
   direction: [number, number, number];
   speed?: number;
   damage?: number;
+  damageType?: string;
   lifetime?: number;
 }): Entity {
   const speed = options.speed ?? 20;
   return world.spawn().set(Transform, { position: options.position }).set(Projectile, {
     owner: options.owner, direction: options.direction, speed,
-    damage: options.damage ?? 10, lifetime: options.lifetime ?? 5,
+    damage: options.damage ?? 10, damageType: options.damageType ?? "generic", lifetime: options.lifetime ?? 5,
   }).set(RigidBody, {
     type: "kinematic",
     velocity: options.direction.map((value) => value * speed) as [number, number, number],
@@ -193,11 +233,29 @@ export function combat() {
         name: "combat.projectiles", phase: "fixedUpdate",
         optionalBefore: ["physics.step"],
         run: ({ dt }) => {
+          const physics = world.services.get("physics") as PhysicsAdapter | undefined;
           for (const entity of world.query(Projectile, Transform)) {
             const projectile = entity.get(Projectile), transform = entity.get(Transform);
             if (!projectile || !transform) continue;
             const lifetime = projectile.lifetime - dt;
             if (lifetime <= 0) { entity.despawn(); continue; }
+            const distance = projectile.speed * dt;
+            const hit = physics?.raycast(world, transform.position, projectile.direction, distance);
+            if (hit && hit.entity !== projectile.owner) {
+              const target = world.entity(hit.entity);
+              if (target.has(Health) && target.has(DamageInbox)) {
+                queueDamage(target, {
+                  amount: projectile.damage, type: projectile.damageType, source: entity.id,
+                  instigator: projectile.owner, tags: ["projectile"], point: hit.point, normal: hit.normal,
+                });
+              }
+              world.events.emit("combat:projectileHit", {
+                projectile: entity.id, owner: projectile.owner, target: hit.entity,
+                point: hit.point, normal: hit.normal,
+              });
+              entity.despawn();
+              continue;
+            }
             entity.set(Projectile, { lifetime });
             entity.set(Transform, { position: transform.position.map((value, index) => value + projectile.direction[index]! * projectile.speed * dt) as [number, number, number] });
           }
@@ -205,4 +263,18 @@ export function combat() {
       });
     },
   });
+}
+
+function consumeShot(shooter: Entity): ReturnType<typeof Weapon.defaults> | undefined {
+  const weapon = shooter.get(Weapon), ammo = shooter.get(Ammo);
+  if (!weapon || !ammo || shooter.has(Reloading) || ammo.magazine <= 0 || weapon.cooldownRemaining > 0) return undefined;
+  shooter.set(Weapon, { cooldownRemaining: weapon.cooldown });
+  shooter.set(Ammo, { magazine: ammo.magazine - 1 });
+  return weapon;
+}
+
+function normalize(direction: [number, number, number]): [number, number, number] {
+  const length = Math.hypot(...direction);
+  if (length === 0) throw new Error("Projectile direction must not be zero");
+  return direction.map((value) => value / length) as [number, number, number];
 }

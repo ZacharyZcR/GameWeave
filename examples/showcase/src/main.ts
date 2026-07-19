@@ -1,6 +1,6 @@
 import { CharacterMotor, Controller, InputManager, character } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
-import { Ammo, DamageInbox, Dead, Faction, Health, Weapon, combat, fire } from "@gameweave/combat";
+import { Ammo, DamageInbox, Dead, Faction, Health, Weapon, combat, fireDirection } from "@gameweave/combat";
 import { AssetManager, assets, createGame, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
@@ -29,14 +29,6 @@ interface ArenaConfig {
   readonly targets: readonly [number, number, number][];
   readonly crates: readonly [number, number, number][];
   readonly barriers: readonly [number, number, number][];
-}
-
-interface Tracer {
-  readonly object: Mesh;
-  readonly from: Vector3;
-  readonly to: Vector3;
-  readonly duration: number;
-  elapsed: number;
 }
 
 const element = <T extends HTMLElement>(id: string) => {
@@ -108,8 +100,7 @@ async function start(): Promise<void> {
     .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
-  const tracers: Tracer[] = [];
-  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, tracers, () => ({ yaw, pitch }));
+  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, () => ({ yaw, pitch }));
   bindTelemetry(world, player);
 
   let collisionCount = 0;
@@ -129,11 +120,23 @@ async function start(): Promise<void> {
     entity.set(Transform, { visible: false });
     entity.remove(Collider);
   });
-  world.events.on("combat:fire", (event) => spawnTracer(world, rendererPlugin.adapter, tracers, event));
+  world.events.on("combat:fire", (event) => {
+    const { projectile } = event as { projectile?: unknown };
+    if (typeof projectile === "string" && world.hasEntity(projectile)) world.entity(projectile).set(Renderable, { asset: "bullet" });
+  });
+  world.events.on("combat:projectileHit", (event) => {
+    const { owner, target } = event as { owner?: unknown; target?: unknown };
+    if (owner !== player.id || typeof target !== "string" || !world.hasEntity(target) || !world.entity(target).has(Health)) return;
+    const marker = element("hit-marker");
+    marker.classList.remove("active");
+    void marker.offsetWidth;
+    marker.classList.add("active");
+    element("runtime-state").textContent = "PROJECTILE HIT";
+  });
 
   canvas.addEventListener("pointerdown", () => {
     if (document.pointerLockElement !== canvas) void canvas.requestPointerLock();
-    shootCrosshair(world, player, physicsAdapter, rendererPlugin.adapter, viewModel);
+    shootCrosshair(world, player, rendererPlugin.adapter, viewModel);
   });
   document.addEventListener("pointerlockchange", () => {
     element("runtime-state").textContent = document.pointerLockElement === canvas ? "FPS CONTROL ACTIVE" : "CLICK TO ENGAGE";
@@ -195,6 +198,7 @@ function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("crate", () => mesh(new BoxGeometry(1, 1, 1), 0x68715f, { cast: true, receive: true }));
   adapter.registerAsset("barrier", () => mesh(new BoxGeometry(3.5, 2, .65), 0x3c423c, { cast: true, receive: true }));
   adapter.registerAsset("target", createSoldier);
+  adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
 }
 
 function mesh(geometry: BufferGeometry, color: number, options: { cast?: boolean; receive?: boolean; rotateX?: number; metalness?: number } = {}): Object3D {
@@ -285,14 +289,17 @@ function buildArena(world: World, config: ArenaConfig): Entity {
       .set(RigidBody, { type: "dynamic", lockRotations: true }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
       .set(Health, { current: 40, max: 40 }).set(DamageInbox, {}).set(Faction, { id: "red" })
       .set(Sensor, { sight: 36, hearing: 22 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 18 })
-      .set(StateMachine, {}).set(BotController, {}).set(Weapon, { id: "ai-rifle", damage: 2, cooldown: .7, range: 36 })
+      .set(StateMachine, {}).set(BotController, {}).set(Weapon, {
+        id: "ai-rifle", damage: 2, cooldown: .7, range: 36, delivery: "projectile", projectileSpeed: 24,
+      })
       .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 });
   }
   return world.spawn({ id: "player" }).set(Transform, { position: [0, 1.01, 5] })
     .set(RigidBody, { type: "kinematic", gravityScale: 0 }).set(Collider, { shape: "capsule", halfHeight: .5, radius: .5 })
     .set(CharacterMotor, { speed: 5.2, sprintSpeed: 8.5, jumpSpeed: 6.2, gravity: 16 }).set(Controller, { input: "range" })
     .set(Health, { current: 100, max: 100 }).set(DamageInbox, {}).set(Faction, { id: "blue" })
-    .set(Weapon, { id: "range-rifle", damage: 40, cooldown: .18, range: 40 }).set(Ammo, { magazine: 12, reserve: 0, capacity: 12 });
+    .set(Weapon, { id: "range-rifle", damage: 40, cooldown: .18, range: 40, delivery: "projectile", projectileSpeed: 38 })
+    .set(Ammo, { magazine: 12, reserve: 0, capacity: 12 });
 }
 
 function installDemoSystems(
@@ -300,7 +307,6 @@ function installDemoSystems(
   adapter: ReturnType<typeof three>["adapter"],
   player: Entity,
   viewModel: Group,
-  tracers: Tracer[],
   view: () => { readonly yaw: number; readonly pitch: number },
 ): void {
   world.addSystem({
@@ -340,49 +346,6 @@ function installDemoSystems(
       }
     },
   });
-  world.addSystem({
-    name: "showcase.tracers", phase: "render", before: ["three.render"],
-    run: ({ dt }) => updateTracers(adapter, tracers, dt),
-  });
-}
-
-function spawnTracer(
-  world: World,
-  adapter: ReturnType<typeof three>["adapter"],
-  tracers: Tracer[],
-  event: unknown,
-): void {
-  const { shooter, target } = event as { shooter?: unknown; target?: unknown };
-  if (typeof shooter !== "string" || typeof target !== "string" || !world.hasEntity(shooter) || !world.hasEntity(target)) return;
-  const start = world.entity(shooter).get(Transform)?.position;
-  const end = world.entity(target).get(Transform)?.position;
-  if (!start || !end) return;
-  const from = new Vector3(start[0], start[1] + .42, start[2]);
-  const to = new Vector3(end[0], end[1] + .38, end[2]);
-  const object = new Mesh(
-    new SphereGeometry(.055, 8, 6),
-    new MeshStandardMaterial({ color: 0xffc45f, emissive: 0xff7a18, emissiveIntensity: 5, roughness: .2 }),
-  );
-  object.position.copy(from);
-  adapter.scene.add(object);
-  tracers.push({ object, from, to, duration: Math.max(.1, from.distanceTo(to) / 32), elapsed: 0 });
-}
-
-function updateTracers(adapter: ReturnType<typeof three>["adapter"], tracers: Tracer[], dt: number): void {
-  for (let index = tracers.length - 1; index >= 0; index -= 1) {
-    const tracer = tracers[index]!;
-    tracer.elapsed += dt;
-    const progress = Math.min(1, tracer.elapsed / tracer.duration);
-    tracer.object.position.lerpVectors(tracer.from, tracer.to, progress);
-    tracer.object.position.y += Math.sin(progress * Math.PI) * .035;
-    if (progress < 1) continue;
-    tracer.object.removeFromParent();
-    tracer.object.geometry.dispose();
-    const material = tracer.object.material;
-    if (!Array.isArray(material)) material.dispose();
-    tracers.splice(index, 1);
-  }
-  void adapter;
 }
 
 function bindTelemetry(world: World, player: Entity): void {
@@ -403,7 +366,6 @@ function bindTelemetry(world: World, player: Entity): void {
 function shootCrosshair(
   world: World,
   player: Entity,
-  adapter: RapierPhysicsAdapter,
   renderer: ReturnType<typeof three>["adapter"],
   viewModel: Group,
 ): void {
@@ -411,19 +373,12 @@ function shootCrosshair(
   const direction: [number, number, number] = [directionVector.x, directionVector.y, directionVector.z];
   const originVector = renderer.camera.position.clone().addScaledVector(directionVector, .7);
   const origin: [number, number, number] = [originVector.x, originVector.y, originVector.z];
-  const hit = adapter.raycast(world, origin, direction, 40);
-  const hitTarget = hit && world.hasEntity(hit.entity) ? world.entity(hit.entity) : undefined;
-  const successful = !!hitTarget?.has(Health) && fire(player, hitTarget, world);
+  const projectile = fireDirection(player, world, origin, direction);
   const transform = player.get(Transform);
   if (transform) emitNoise(world, { source: player.id, faction: "blue", position: transform.position, radius: 20 });
-  if ((player.get(Weapon)?.cooldownRemaining ?? 0) > 0) viewModel.userData.recoil = 1;
-  element("runtime-state").textContent = successful ? "TARGET HIT" : hit ? "SURFACE HIT" : "MISS";
-  if (successful) {
-    const marker = element("hit-marker");
-    marker.classList.remove("active");
-    void marker.offsetWidth;
-    marker.classList.add("active");
-  }
+  if (!projectile) return;
+  viewModel.userData.recoil = 1;
+  element("runtime-state").textContent = "ROUND FIRED";
 }
 
 function resetRange(world: World, player: Entity): void {

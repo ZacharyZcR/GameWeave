@@ -108,15 +108,12 @@ export class BasicPhysicsAdapter implements PhysicsAdapter {
         : Math.hypot(...collider.size) / 2;
       const offset = transform.position.map((value, index) => value - origin[index]!) as [number, number, number];
       const projection = offset[0] * ray[0] + offset[1] * ray[1] + offset[2] * ray[2];
-      if (projection < 0 || projection > maxDistance) continue;
-      const closest = origin.map((value, index) => value + ray[index]! * projection) as [number, number, number];
-      const distanceToCenter = Math.hypot(
-        closest[0] - transform.position[0],
-        closest[1] - transform.position[1],
-        closest[2] - transform.position[2],
-      );
-      if (distanceToCenter > radius) continue;
-      const hitDistance = projection - Math.sqrt(radius ** 2 - distanceToCenter ** 2);
+      const perpendicularSquared = offset.reduce((sum, value) => sum + value ** 2, 0) - projection ** 2;
+      const discriminant = radius ** 2 - perpendicularSquared;
+      if (discriminant < 0) continue;
+      const root = Math.sqrt(discriminant);
+      const near = projection - root, far = projection + root;
+      const hitDistance = near >= 0 ? near : far;
       if (hitDistance < 0 || hitDistance > maxDistance || (nearest && nearest.distance <= hitDistance)) continue;
       const point = origin.map((value, index) => value + ray[index]! * hitDistance) as [number, number, number];
       const normal = point.map((value, index) => (value - transform.position[index]!) / radius) as [number, number, number];
