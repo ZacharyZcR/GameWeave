@@ -15,5 +15,5 @@
     "@gameweave/ui": "^0.1.0",
     "three": "^0.180.0"
   },
-  "devDependencies": { "@gameweave/cli": "^0.1.0", "vite": "^7.1.7" }
+  "devDependencies": { "@gameweave/cli": "^0.1.0", "vite": "^8.1.5" }
 }
