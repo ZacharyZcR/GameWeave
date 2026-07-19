@@ -136,7 +136,8 @@ export class ThreeAdapter {
       }
     }
 
-    for (const id of [...this.#objects.keys()]) {
+    // 只回收 sync 自己创建的对象；手动 attach 的由调用方管理
+    for (const id of [...this.#managed]) {
       if (!world.hasEntity(id) || !alive.has(id)) this.detach(id);
     }
   }

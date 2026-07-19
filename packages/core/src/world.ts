@@ -49,6 +49,9 @@ export class World {
   #tick = 0;
   #nextEntityId = 1;
   #entities = new Map<EntityId, EntityRecord>();
+  #pendingEntities = new Map<EntityId, EntityRecord>();
+  #pendingComponents = new Map<EntityId, Map<string, ComponentData>>();
+  #systemsDirty = false;
   #unknownComponents = new Map<EntityId, Record<string, import("./types.js").SerializedComponent>>();
   #definitions = new Map<string, ComponentDefinition<ComponentData>>();
   #systems: SystemDefinition[] = [];
@@ -99,9 +102,10 @@ export class World {
         }
       : system;
     const systems = [...this.#systems, definition];
-    const orderedSystems = orderSystems(systems);
+    const orderedSystems = orderSystems(systems, false);
     this.#systems = systems;
     this.#orderedSystems = orderedSystems;
+    this.#systemsDirty = true;
     return this;
   }
 
@@ -114,8 +118,11 @@ export class World {
     const options = isPrefab(optionsOrPrefab)
       ? instantiatePrefab(optionsOrPrefab, overrides)
       : optionsOrPrefab;
+    if (options.id === undefined) {
+      while (this.hasEntity(`${this.name}:${this.#nextEntityId}`)) this.#nextEntityId += 1;
+    }
     const id = options.id ?? `${this.name}:${this.#nextEntityId++}`;
-    if (this.#entities.has(id)) throw new Error(`Duplicate entity id: ${id}`);
+    if (this.hasEntity(id)) throw new Error(`Duplicate entity id: ${id}`);
 
     const record: EntityRecord = {
       id,
@@ -128,14 +135,25 @@ export class World {
       record.components.set(componentId, this.#createValue(definition, input));
     }
 
-    this.#enqueue(() => this.#entities.set(id, record));
+    this.#pendingEntities.set(id, record);
+    this.#enqueue(() => {
+      const pending = this.#pendingEntities.get(id);
+      if (!pending) return;
+      this.#pendingEntities.delete(id);
+      this.#entities.set(id, pending);
+    });
     return new Entity(this, id);
   }
 
   despawn(entity: Entity | EntityId): void {
     const id = typeof entity === "string" ? entity : entity.id;
     this.#assertAlive(id);
-    this.#enqueue(() => { this.#entities.delete(id); this.#unknownComponents.delete(id); });
+    if (this.#pendingEntities.delete(id)) return;
+    this.#enqueue(() => {
+      this.#entities.delete(id);
+      this.#unknownComponents.delete(id);
+      this.#pendingComponents.delete(id);
+    });
   }
 
   entity(id: EntityId): Entity {
@@ -144,25 +162,25 @@ export class World {
   }
 
   hasEntity(id: EntityId): boolean {
-    return this.#entities.has(id);
+    return this.#entities.has(id) || this.#pendingEntities.has(id);
   }
 
   hasComponent<T extends ComponentData>(
     id: EntityId,
     definition: ComponentDefinition<T>,
   ): boolean {
-    return this.#entities.get(id)?.components.has(definition.id) ?? false;
+    return this.#componentOf(id, definition.id) !== undefined;
   }
 
   getComponent<T extends ComponentData>(
     id: EntityId,
     definition: ComponentDefinition<T>,
   ): T | undefined {
-    return this.#entities.get(id)?.components.get(definition.id) as T | undefined;
+    return this.#componentOf(id, definition.id) as T | undefined;
   }
 
   getComponentById(id: EntityId, componentId: string): ComponentData | undefined {
-    return this.#entities.get(id)?.components.get(componentId);
+    return this.#componentOf(id, componentId);
   }
 
   setComponent<T extends ComponentData>(
@@ -172,18 +190,28 @@ export class World {
   ): void {
     this.#assertAlive(id);
     this.register(definition);
-    const record = this.#entities.get(id);
-    if (record?.components.has(definition.id)) {
-      record.components.set(definition.id, this.#createValue(definition, {
-        ...record.components.get(definition.id),
+    const committed = this.#entities.get(id);
+    if (committed && !committed.components.has(definition.id)) {
+      // 已提交实体的新组件：数据立即可读，query 在阶段边界后可见
+      const staged = this.#pendingComponents.get(id) ?? new Map<string, ComponentData>();
+      staged.set(definition.id, this.#createValue(definition, {
+        ...staged.get(definition.id),
         ...input,
       }));
+      this.#pendingComponents.set(id, staged);
+      this.#enqueue(() => {
+        const value = this.#pendingComponents.get(id)?.get(definition.id);
+        if (value === undefined) return;
+        this.#entities.get(id)?.components.set(definition.id, value);
+        this.#discardStaged(id, definition.id);
+      });
       return;
     }
-    this.#enqueue(() => this.#entities.get(id)?.components.set(
-      definition.id,
-      this.#createValue(definition, input),
-    ));
+    const record = committed ?? this.#pendingEntities.get(id);
+    record?.components.set(definition.id, this.#createValue(definition, {
+      ...record.components.get(definition.id),
+      ...input,
+    }));
   }
 
   removeComponent(
@@ -191,6 +219,12 @@ export class World {
     definition: ComponentDefinition<ComponentData>,
   ): void {
     this.#assertAlive(id);
+    const pending = this.#pendingEntities.get(id);
+    if (pending) {
+      pending.components.delete(definition.id);
+      return;
+    }
+    this.#discardStaged(id, definition.id);
     this.#enqueue(() => this.#entities.get(id)?.components.delete(definition.id));
   }
 
@@ -212,6 +246,10 @@ export class World {
   }
 
   runPhase(phase: SystemPhase, dt: number, tick = this.#tick): void {
+    if (this.#systemsDirty) {
+      this.#orderedSystems = orderSystems(this.#systems);
+      this.#systemsDirty = false;
+    }
     this.#tick = tick;
     this.#runningSystem = true;
     try {
@@ -336,6 +374,9 @@ export class World {
     }
     this.#entities = entities;
     this.#unknownComponents = unknownComponents;
+    this.#pendingEntities.clear();
+    this.#pendingComponents.clear();
+    this.#commands = [];
     this.#tick = snapshot.tick;
   }
 
@@ -348,9 +389,21 @@ export class World {
   }
 
   #assertAlive(id: EntityId): void {
-    if (!this.#entities.has(id)) {
+    if (!this.hasEntity(id)) {
       throw new Error(`Entity is not alive: ${id}`);
     }
+  }
+
+  #componentOf(id: EntityId, componentId: string): ComponentData | undefined {
+    const record = this.#entities.get(id) ?? this.#pendingEntities.get(id);
+    return record?.components.get(componentId) ?? this.#pendingComponents.get(id)?.get(componentId);
+  }
+
+  #discardStaged(id: EntityId, componentId: string): void {
+    const staged = this.#pendingComponents.get(id);
+    if (!staged) return;
+    staged.delete(componentId);
+    if (staged.size === 0) this.#pendingComponents.delete(id);
   }
 
   #requireDefinition(id: string): ComponentDefinition<ComponentData> {

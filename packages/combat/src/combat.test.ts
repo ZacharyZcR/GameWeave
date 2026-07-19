@@ -1,7 +1,7 @@
 import { createGame } from "@gameweave/core";
 import { physics } from "@gameweave/physics";
 import { describe, expect, it } from "vitest";
-import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, fire, fireHitscan, Health, hitscan, reload, Reloading, spawnProjectile, Weapon } from "./index.js";
+import { Ammo, combat, DamageInbox, Dead, defineWeapon, equipWeapon, fire, fireHitscan, Health, hitscan, Projectile, queueDamage, reload, Reloading, spawnProjectile, Weapon } from "./index.js";
 import { Collider } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
@@ -43,4 +43,58 @@ it("advances and expires projectiles on fixed ticks", () => {
   expect(projectile.get(Transform)?.position[2]).toBe(2);
   game.step();
   expect(projectile.isAlive()).toBe(false);
+});
+
+it("accumulates same-phase damage queued to a target without an inbox", () => {
+  const game = createGame().use(physics()).use(combat());
+  const world = game.createWorld("arena");
+  const target = world.spawn().set(Health, {});
+  world.addSystem({
+    name: "test.attackers", phase: "fixedUpdate", before: ["combat.damage"],
+    run: () => {
+      if (world.tick !== 1) return;
+      queueDamage(target, { amount: 10, type: "test" });
+      queueDamage(target, { amount: 20, type: "test" });
+    },
+  });
+  game.step(2);
+  expect(target.get(Health)?.current).toBe(70);
+});
+
+it("keeps cooldown and reload working across a JSON save/load", () => {
+  const game = createGame().use(physics()).use(combat());
+  const world = game.createWorld("arena");
+  const rifle = defineWeapon("rifle", { roundsPerMinute: 60, magazineSize: 2, reserve: 4, reloadTime: 1, damage: { amount: 32, type: "ballistic" } });
+  const shooter = equipWeapon(world.spawn({ id: "shooter" }), rifle);
+  const target = world.spawn({ id: "target" }).set(Health, {}).set(DamageInbox, {});
+  game.step(120);
+  expect(fire(shooter, target, world)).toBe(true);
+  shooter.set(Ammo, { magazine: 0 });
+  expect(reload(shooter, world)).toBe(true);
+
+  const snapshot = JSON.parse(JSON.stringify(world.serialize()));
+  const restored = createGame().use(physics()).use(combat());
+  const world2 = restored.createWorld("arena2");
+  world2.load(snapshot);
+  const shooter2 = world2.entity("shooter");
+  expect(shooter2.has(Reloading)).toBe(true);
+  restored.step(120);
+  expect(shooter2.has(Reloading)).toBe(false);
+  expect(shooter2.get(Ammo)).toMatchObject({ magazine: 2, reserve: 2 });
+  expect(fire(shooter2, world2.entity("target"), world2)).toBe(true);
+});
+
+it("spawns configured projectiles from inside a fixed update system", () => {
+  const game = createGame({ fixedStep: 1 }).use(combat());
+  const world = game.createWorld("arena");
+  world.addSystem({
+    name: "test.launcher", phase: "fixedUpdate", before: ["combat.projectiles"],
+    run: () => {
+      if (world.tick !== 1) return;
+      spawnProjectile(world, { owner: "player", position: [0, 0, 0], direction: [0, 0, 1], speed: 2, lifetime: 5 });
+    },
+  });
+  game.step(2);
+  const [projectile] = world.query(Projectile, Transform).snapshot();
+  expect(projectile?.get(Transform)?.position[2]).toBe(2);
 });

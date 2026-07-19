@@ -8,6 +8,7 @@ export function defineSystem(system: SystemFactory): SystemFactory {
 
 export function orderSystems(
   systems: readonly SystemDefinition[],
+  strict = true,
 ): Map<SystemPhase, readonly SystemDefinition[]> {
   const byName = new Map<string, SystemDefinition>();
 
@@ -22,7 +23,7 @@ export function orderSystems(
 
   for (const phase of systemPhases) {
     const phaseSystems = systems.filter((system) => system.phase === phase);
-    result.set(phase, topologicalSort(phaseSystems, byName));
+    result.set(phase, topologicalSort(phaseSystems, byName, strict));
   }
 
   return result;
@@ -31,6 +32,7 @@ export function orderSystems(
 function topologicalSort(
   systems: readonly SystemDefinition[],
   allSystems: ReadonlyMap<string, SystemDefinition>,
+  strict: boolean,
 ): readonly SystemDefinition[] {
   const local = new Map(systems.map((system) => [system.name, system]));
   const edges = new Map<string, Set<string>>(
@@ -44,7 +46,7 @@ function topologicalSort(
       if (external && external.phase !== local.get(local.has(from) ? from : to)?.phase) {
         throw new Error(`System dependency cannot cross phases: ${from} -> ${to}`);
       }
-      if (!external) {
+      if (!external && strict) {
         throw new Error(`Unknown system dependency: ${from} -> ${to}`);
       }
       return;

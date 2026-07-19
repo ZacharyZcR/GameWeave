@@ -381,3 +381,79 @@ describe("serialization and scheduling", () => {
     expect(calls).toEqual([30]);
   });
 });
+
+describe("regressions", () => {
+  it("configures entities spawned inside a system phase", () => {
+    const world = new World("test").register(Position).register(Velocity);
+    world.addSystem({
+      name: "spawner",
+      phase: "fixedUpdate",
+      run: () => {
+        if (world.tick !== 1) return;
+        const spawned = world.spawn().set(Position, { x: 7 }).set(Velocity, { y: 2 });
+        expect(spawned.get(Position)).toEqual({ x: 7, y: 0 });
+        expect(spawned.isAlive()).toBe(true);
+        expect(world.query(Position).snapshot().length).toBe(0);
+      },
+    });
+    world.runPhase("fixedUpdate", 1 / 60, 1);
+    expect(world.query(Position, Velocity).snapshot().length).toBe(1);
+  });
+
+  it("cancels a spawn despawned within the same phase", () => {
+    const world = new World("test").register(Position);
+    world.addSystem({
+      name: "spawn-and-cancel",
+      phase: "fixedUpdate",
+      run: () => {
+        if (world.tick !== 1) return;
+        world.spawn({ id: "ghost" }).set(Position, {}).despawn();
+      },
+    });
+    world.runPhase("fixedUpdate", 1 / 60, 1);
+    expect(world.hasEntity("ghost")).toBe(false);
+  });
+
+  it("merges staged writes to a component added during a phase", () => {
+    const Inbox = defineComponent<{ messages: number[] }>("inbox", { defaults: () => ({ messages: [] }) });
+    const world = new World("test").register(Inbox);
+    const target = world.spawn();
+    world.addSystem({
+      name: "writer",
+      phase: "fixedUpdate",
+      run: () => {
+        if (world.tick !== 1) return;
+        target.set(Inbox, { messages: [...(target.get(Inbox)?.messages ?? []), 1] });
+        target.set(Inbox, { messages: [...(target.get(Inbox)?.messages ?? []), 2] });
+      },
+    });
+    world.runPhase("fixedUpdate", 1 / 60, 1);
+    expect(target.get(Inbox)?.messages).toEqual([1, 2]);
+  });
+
+  it("does not reuse loaded entity ids for new spawns", () => {
+    const world = new World("arena");
+    world.load({
+      $schema: "https://gameweave.dev/schema/world-0.1.json", version: 1, name: "arena", tick: 5,
+      entities: [{ id: "arena:1", components: {} }],
+    });
+    const spawned = world.spawn();
+    expect(spawned.id).not.toBe("arena:1");
+    expect(world.hasEntity(spawned.id)).toBe(true);
+  });
+
+  it("resolves hard dependencies regardless of registration order", () => {
+    const order: string[] = [];
+    const world = new World("test");
+    world.addSystem({ name: "second", phase: "fixedUpdate", after: ["first"], run: () => order.push("second") });
+    world.addSystem({ name: "first", phase: "fixedUpdate", run: () => order.push("first") });
+    world.runPhase("fixedUpdate", 1 / 60, 1);
+    expect(order).toEqual(["first", "second"]);
+  });
+
+  it("still rejects dependencies that never register", () => {
+    const world = new World("test");
+    world.addSystem({ name: "orphan", phase: "fixedUpdate", after: ["missing"], run: () => {} });
+    expect(() => world.runPhase("fixedUpdate", 1 / 60, 1)).toThrow("Unknown system dependency");
+  });
+});

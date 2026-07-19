@@ -21,12 +21,12 @@ export const Faction = defineComponent("faction", { defaults: { id: "neutral" } 
 export const Ammo = defineComponent("ammo", { defaults: { magazine: 30, reserve: 90, capacity: 30 } });
 export const Weapon = defineComponent("weapon", { defaults: {
   id: "", fireMode: "semi" as "semi" | "automatic", damage: 10, damageType: "generic",
-  cooldown: 0.2, lastFiredAt: -Infinity, reloadTime: 2, range: 300, spread: 0,
+  cooldown: 0.2, cooldownRemaining: 0, reloadTime: 2, range: 300, spread: 0,
 } });
 export const Inventory = defineComponent("inventory", { defaults: { items: [] as string[], equipped: "" } });
 export const Projectile = defineComponent("projectile", { defaults: { damage: 10, speed: 20, owner: "", lifetime: 5, direction: [0, 0, 1] as [number, number, number] } });
 export const Dead = defineComponent("dead", { defaults: { atTick: 0 } });
-export const Reloading = defineComponent("reloading", { defaults: { completesAt: 0 } });
+export const Reloading = defineComponent("reloading", { defaults: { remaining: 0 } });
 
 export interface WeaponDefinition {
   readonly id: string;
@@ -85,9 +85,8 @@ export function fire(shooter: Entity, target: Entity, world: World): boolean {
   const weapon = shooter.get(Weapon);
   const ammo = shooter.get(Ammo);
   if (!weapon || !ammo || shooter.has(Reloading) || ammo.magazine <= 0) return false;
-  const now = world.scheduler.now;
-  if (now - weapon.lastFiredAt < weapon.cooldown) return false;
-  shooter.set(Weapon, { lastFiredAt: now });
+  if (weapon.cooldownRemaining > 0) return false;
+  shooter.set(Weapon, { cooldownRemaining: weapon.cooldown });
   shooter.set(Ammo, { magazine: ammo.magazine - 1 });
   queueDamage(target, { amount: weapon.damage, type: weapon.damageType, source: shooter.id, instigator: shooter.id, weapon: weapon.id });
   world.events.emit("combat:fire", { shooter: shooter.id, target: target.id, weapon: weapon.id });
@@ -114,16 +113,7 @@ export function reload(entity: Entity, world: World): boolean {
   const ammo = entity.get(Ammo);
   const weapon = entity.get(Weapon);
   if (!ammo || !weapon || entity.has(Reloading) || ammo.magazine >= ammo.capacity || ammo.reserve <= 0) return false;
-  entity.set(Reloading, { completesAt: world.scheduler.now + weapon.reloadTime });
-  world.scheduler.after(weapon.reloadTime, () => {
-    if (!entity.isAlive()) return;
-    const current = entity.get(Ammo);
-    if (!current) return;
-    const count = Math.min(current.capacity - current.magazine, current.reserve);
-    entity.set(Ammo, { magazine: current.magazine + count, reserve: current.reserve - count });
-    entity.remove(Reloading);
-    world.events.emit("combat:reload", { entity: entity.id, count });
-  });
+  entity.set(Reloading, { remaining: weapon.reloadTime });
   return true;
 }
 
@@ -157,6 +147,30 @@ export function combat() {
       world.register(Health).register(Damageable).register(DamageInbox).register(Faction)
         .register(Ammo).register(Weapon).register(Inventory).register(Projectile).register(Dead)
         .register(Reloading).register(Transform).register(RigidBody);
+      world.addSystem({
+        name: "combat.timers", phase: "fixedUpdate",
+        before: ["combat.damage"],
+        run: ({ dt }) => {
+          const epsilon = 1e-9;
+          for (const entity of world.query(Weapon)) {
+            const weapon = entity.get(Weapon);
+            if (!weapon || weapon.cooldownRemaining <= 0) continue;
+            const remaining = weapon.cooldownRemaining - dt;
+            entity.set(Weapon, { cooldownRemaining: remaining > epsilon ? remaining : 0 });
+          }
+          for (const entity of world.query(Reloading, Ammo)) {
+            const reloading = entity.get(Reloading);
+            const ammo = entity.get(Ammo);
+            if (!reloading || !ammo) continue;
+            const remaining = reloading.remaining - dt;
+            if (remaining > epsilon) { entity.set(Reloading, { remaining }); continue; }
+            const count = Math.min(ammo.capacity - ammo.magazine, ammo.reserve);
+            entity.set(Ammo, { magazine: ammo.magazine + count, reserve: ammo.reserve - count });
+            entity.remove(Reloading);
+            world.events.emit("combat:reload", { entity: entity.id, count });
+          }
+        },
+      });
       world.addSystem({
         name: "combat.damage", phase: "fixedUpdate",
         optionalAfter: ["physics.step"],
