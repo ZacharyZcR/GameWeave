@@ -77,8 +77,6 @@ async function start(): Promise<void> {
   loadingState.textContent = "载入 GLB 模型";
   const [rifleGltf] = await Promise.all([
     new GLTFLoader().loadAsync("/models/Rifle.glb"),
-    rendererPlugin.adapter.loadModel("fox", "/models/Fox.glb", { scale: .018, castShadow: true }),
-    rendererPlugin.adapter.loadModel("cesium-man", "/models/CesiumMan.glb", { castShadow: true }),
     rendererPlugin.adapter.loadModel("soldier", "/models/Soldier.glb", { offset: [0, -.95, 0], castShadow: true }),
   ]);
   const viewModel = createViewModel(rifleGltf.scene);
@@ -114,7 +112,6 @@ async function start(): Promise<void> {
     .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
-  spawnWildlife(world, rendererPlugin.adapter);
   const effects = createEffects(rendererPlugin.adapter);
   installDemoSystems(world, rendererPlugin.adapter, player, viewModel, effects, () => ({ yaw, pitch, aiming, thirdPerson }));
   bindTelemetry(world, player);
@@ -134,16 +131,12 @@ async function start(): Promise<void> {
     const entity = world.entity(target);
     if (entity.has(BotController)) {
       entity.set(BotController, { enabled: false });
-      entity.set(RigidBody, { lockRotations: false, velocity: [0, 2.2, 1.8] });
+      // 保持锁旋转：倒地姿态只由 ragdoll 内层旋转表现，物理胶囊翻滚会把 root 翻回直立
+      entity.set(RigidBody, { velocity: [0, 2.2, 1.8] });
       activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
       return;
     }
     const position = entity.get(Transform)?.position;
-    if (target.startsWith("fox")) {
-      if (position) effects.burst(position, "flesh", 18);
-      entity.despawn();
-      return;
-    }
     // 可破坏物：炸成物理碎块，不是凭空消失
     if (position) {
       effects.burst(position, "dust", 14);
@@ -422,21 +415,6 @@ function spawnPropDebris(world: World, id: string, position: readonly [number, n
   }
 }
 
-// 真实 GLB 模型的接入验证：一只可射击的站桩狐狸 + 两只游荡狐狸 + 绕圈的 CesiumMan
-function spawnWildlife(world: World, adapter: ReturnType<typeof three>["adapter"]): void {
-  world.spawn({ id: "fox-static" }).set(Transform, { position: [6, .01, -4] })
-    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Survey" })
-    .set(RigidBody, { type: "static" }).set(Collider, { shape: "sphere", radius: .7 })
-    .set(Health, { current: 20, max: 20 }).set(DamageInbox, {});
-  world.spawn({ id: "fox-walk" }).set(Transform, { position: [-8, .01, 6] })
-    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Walk" });
-  world.spawn({ id: "fox-run" }).set(Transform, { position: [9, .01, 8] })
-    .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Run" });
-  const walkClip = adapter.animations("cesium-man")[0] ?? "";
-  world.spawn({ id: "cesium-man" }).set(Transform, { position: [0, .01, -2] })
-    .set(Renderable, { asset: "cesium-man" }).set(ModelAnimation, { clip: walkClip });
-}
-
 function spawnBarrier(world: World, index: number, position: readonly [number, number, number]): void {
   world.spawn({ id: `barrier-${index}` }).set(Transform, { position: [...position] }).set(Renderable, { asset: "barrier" })
     .set(RigidBody, { type: "static" }).set(Collider, { size: [3.5, 2, .65] })
@@ -658,35 +636,6 @@ function installDemoSystems(
       }
     },
   });
-  // yawOffset：模型不朝 +z 时补偿（π 掉头，±π/2 转 90 度）
-  const patrols: Record<string, { center: [number, number]; radius: number; angular: number; yawOffset: number }> = {
-    "fox-walk": { center: [-8, 6], radius: 4, angular: .45, yawOffset: 0 },
-    "fox-run": { center: [9, 8], radius: 3, angular: 1.1, yawOffset: 0 },
-    "cesium-man": { center: [0, -2], radius: 7, angular: .18, yawOffset: 0 },
-  };
-  world.addSystem({
-    name: "showcase.wildlife", phase: "fixedUpdate",
-    run: () => {
-      const seconds = world.tick / 60;
-      for (const [id, patrol] of Object.entries(patrols)) {
-        if (!world.hasEntity(id)) continue;
-        const entity = world.entity(id);
-        const angle = seconds * patrol.angular;
-        // 圆周切线方向 [-sin, 0, cos]；+z forward 模型对准它的解是 -angle
-        const yaw = -angle + patrol.yawOffset;
-        entity.set(Transform, {
-          position: [patrol.center[0] + Math.cos(angle) * patrol.radius, .01, patrol.center[1] + Math.sin(angle) * patrol.radius],
-          quaternion: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
-        });
-      }
-      // 每 6 秒 Walk/Run 互切，验证动画 crossfade
-      if (world.hasEntity("fox-walk")) {
-        const fox = world.entity("fox-walk");
-        const clip = Math.floor(seconds / 6) % 2 === 0 ? "Walk" : "Run";
-        if (fox.get(ModelAnimation)?.clip !== clip) fox.set(ModelAnimation, { clip });
-      }
-    },
-  });
   world.addSystem({
     name: "showcase.debris", phase: "fixedUpdate",
     run: ({ dt }) => {
@@ -812,7 +761,7 @@ function shootCrosshair(
 function resetRange(world: World, player: Entity, config: ArenaConfig, adapter: ReturnType<typeof three>["adapter"]): void {
   for (const target of world.query(Health, BotController)) {
     target.set(Health, { current: 40 });
-    target.set(Transform, { visible: true });
+    target.set(Transform, { visible: true, quaternion: [0, 0, 0, 1] });
     if (!target.has(Collider)) target.set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 });
     if (target.has(Dead)) target.remove(Dead);
     target.set(Ragdoll, { active: false, elapsed: 0 });
