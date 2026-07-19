@@ -1,6 +1,6 @@
 import { createGame } from "@gameweave/core";
 import { AnimationClip, BoxGeometry, Mesh, MeshStandardMaterial, Object3D, VectorKeyframeTrack } from "three";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ManualTransform, ModelAnimation, Renderable, three, Transform } from "./index.js";
 
 describe("Three adapter", () => {
@@ -114,5 +114,27 @@ describe("model pipeline", () => {
     };
     expect(materialOf(first.id)).toBeDefined();
     expect(materialOf(first.id)).not.toBe(materialOf(second.id));
+  });
+
+  it("keeps shared model geometry alive when one instance is removed", () => {
+    const plugin = three();
+    const geometry = new BoxGeometry(1, 1, 1);
+    const dispose = vi.spyOn(geometry, "dispose");
+    const scene = new Object3D();
+    scene.add(new Mesh(geometry, new MeshStandardMaterial()));
+    plugin.adapter.registerModel("crate", { scene });
+    const game = createGame().use(plugin);
+    const world = game.createWorld("arena");
+    const first = world.spawn().set(Transform, {}).set(Renderable, { asset: "crate" });
+    const second = world.spawn().set(Transform, {}).set(Renderable, { asset: "crate" });
+    game.advance(0);
+
+    first.despawn();
+    game.advance(0);
+    expect(dispose).not.toHaveBeenCalled();
+    expect(plugin.adapter.object(second.id)).toBeDefined();
+
+    plugin.adapter.dispose();
+    expect(dispose).toHaveBeenCalledOnce();
   });
 });

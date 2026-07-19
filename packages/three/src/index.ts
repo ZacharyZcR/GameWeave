@@ -95,6 +95,7 @@ export class ThreeAdapter {
   #modelClips = new Map<string, readonly AnimationClip[]>();
   #objects = new Map<EntityId, Object3D>();
   #managed = new Set<EntityId>();
+  #sharedGeometry = new WeakSet<Object3D>();
   #synced = new Map<EntityId, TransformData>();
   #animations = new Map<EntityId, AnimationState>();
 
@@ -141,7 +142,11 @@ export class ThreeAdapter {
     }
     this.#assetTemplates.push(template);
     // 骨骼安全克隆；几何共享，材质独立（每实例可单独改色而不串染）
-    this.registerAsset(id, () => cloneMaterials(cloneSkeleton(template)));
+    this.registerAsset(id, () => {
+      const instance = cloneMaterials(cloneSkeleton(template));
+      this.#sharedGeometry.add(instance);
+      return instance;
+    });
     this.#modelClips.set(id, [...(model.animations ?? [])]);
     return this;
   }
@@ -228,7 +233,10 @@ export class ThreeAdapter {
     this.#animations.get(entity)?.mixer.stopAllAction();
     this.#animations.delete(entity);
     object.removeFromParent();
-    if (this.#managed.has(entity)) disposeObject(object);
+    if (this.#managed.has(entity)) {
+      if (this.#sharedGeometry.has(object)) disposeMaterials(object);
+      else disposeObject(object);
+    }
     this.#managed.delete(entity);
     this.#synced.delete(entity);
     this.#objects.delete(entity);
@@ -326,11 +334,18 @@ function disposeObject(root: Object3D): void {
       material?: { dispose(): void } | { dispose(): void }[];
     };
     candidate.geometry?.dispose();
-    const materials = Array.isArray(candidate.material)
-      ? candidate.material
-      : candidate.material ? [candidate.material] : [];
-    for (const material of materials) material.dispose();
+    disposeCandidateMaterials(candidate);
   });
+}
+
+function disposeMaterials(root: Object3D): void {
+  root.traverse(disposeCandidateMaterials);
+}
+
+function disposeCandidateMaterials(object: Object3D): void {
+  const candidate = object as Object3D & { material?: { dispose(): void } | { dispose(): void }[] };
+  const materials = Array.isArray(candidate.material) ? candidate.material : candidate.material ? [candidate.material] : [];
+  for (const material of materials) material.dispose();
 }
 
 export { Object3D, PerspectiveCamera, Scene } from "three";

@@ -10,12 +10,13 @@
   ],
   "scripts": {
     "build": "npm run build:packages && npm run build --workspace @gameweave/example-fps && npm run build --workspace @gameweave/example-steel-front && npm run build --workspace @gameweave/example-showcase",
-    "build:packages": "npm run build --workspace @gameweave/core && npm run build --workspace @gameweave/three && npm run build --workspace @gameweave/physics && npm run build --workspace @gameweave/character && npm run build --workspace @gameweave/combat && npm run build --workspace @gameweave/bots && npm run build --workspace @gameweave/ui && npm run build --workspace @gameweave/debug",
+    "build:packages": "npm run build --workspace @gameweave/core && npm run build --workspace @gameweave/three && npm run build --workspace @gameweave/physics && npm run build --workspace @gameweave/character && npm run build --workspace @gameweave/combat && npm run build --workspace @gameweave/bots && npm run build --workspace @gameweave/i18n && npm run build --workspace @gameweave/ui && npm run build --workspace @gameweave/debug && npm run build --workspace @gameweave/export-tauri && npm run build --workspace @gameweave/cli",
     "test": "npm run test --workspaces --if-present",
     "metrics": "node scripts/metrics.mjs",
     "typecheck": "npm run build:packages && npm run typecheck --workspaces --if-present"
   },
   "devDependencies": {
+    "@types/node": "^24.0.0",
     "typescript": "^5.9.3",
     "vitest": "^4.0.18"
   }

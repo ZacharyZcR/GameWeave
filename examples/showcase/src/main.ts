@@ -3,6 +3,7 @@ import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, 
 import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload, throwGrenade } from "@gameweave/combat";
 import { AssetManager, assets, createGame, defineComponent, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
+import { createI18n, translateDocument } from "@gameweave/i18n";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
 import { ModelAnimation, Renderable, Transform, three } from "@gameweave/three";
 import {
@@ -33,6 +34,38 @@ interface ArenaConfig {
   readonly barriers: readonly [number, number, number][];
 }
 
+const i18n = createI18n({
+  locale: new URLSearchParams(location.search).get("lang") ?? "en",
+  messages: {
+    en: {
+      canvasLabel: "GameWeave physics range", loadingTitle: "WEAVING THE RANGE", preparingAssets: "PREPARING ASSETS",
+      startupFailed: "RANGE FAILED TO START", reload: "RELOAD", runtimeStatus: "Runtime status", enemyAi: "ENEMY AI",
+      health: "HEALTH", ammo: "AMMO", grenades: "GRENADES", collisions: "COLLISIONS", grounded: "GROUNDED", aiState: "AI STATE",
+      move: "MOVE", sprint: "SPRINT", jump: "JUMP", fire: "FIRE", ads: "ADS", grenade: "GRENADE", view: "VIEW", reloadAction: "RELOAD", reset: "RESET",
+      assetFailed: "Asset load failed: {status} {url}", assetLoaded: "Loaded {id}", readingConfig: "READING RANGE CONFIG",
+      emptyConfig: "Range configuration is empty", initializingPhysics: "INITIALIZING RAPIER WASM", loadingModels: "LOADING GLB MODELS",
+      operatorDown: "OPERATOR DOWN - PRESS T", projectileHit: "PROJECTILE HIT", takingFire: "TAKING FIRE",
+      controlActive: "FPS CONTROL ACTIVE", clickToEngage: "CLICK TO ENGAGE", reloading: "RELOADING", fragOut: "FRAG OUT",
+      thirdPerson: "THIRD PERSON", firstPerson: "FIRST PERSON", physicsOnline: "RAPIER ONLINE", yes: "YES", no: "NO",
+      attack: "ATTACK", chase: "CHASE", idle: "IDLE", roundFired: "ROUND FIRED", rangeReset: "RANGE RESET",
+    },
+    zh: {
+      canvasLabel: "GameWeave 物理训练场", loadingTitle: "正在编织训练场", preparingAssets: "准备资源",
+      startupFailed: "训练场未能启动", reload: "重新加载", runtimeStatus: "运行状态", enemyAi: "敌方 AI",
+      health: "生命", ammo: "弹药", grenades: "手雷", collisions: "碰撞事件", grounded: "接地", aiState: "AI 状态",
+      move: "移动", sprint: "冲刺", jump: "跳跃", fire: "射击", ads: "瞄具", grenade: "手雷", view: "视角", reloadAction: "换弹", reset: "重置",
+      assetFailed: "资源加载失败: {status} {url}", assetLoaded: "已载入 {id}", readingConfig: "读取场景配置",
+      emptyConfig: "训练场配置为空", initializingPhysics: "初始化 Rapier WASM", loadingModels: "载入 GLB 模型",
+      operatorDown: "角色倒下 - 按 T 重置", projectileHit: "弹道命中", takingFire: "正在遭受攻击",
+      controlActive: "FPS 控制已启用", clickToEngage: "点击进入战斗", reloading: "换弹中", fragOut: "手雷投出",
+      thirdPerson: "第三人称", firstPerson: "第一人称", physicsOnline: "RAPIER 已就绪", yes: "是", no: "否",
+      attack: "攻击", chase: "追击", idle: "待机", roundFired: "已开火", rangeReset: "训练场已重置",
+    },
+  },
+});
+const t = (key: string, params?: Readonly<Record<string, string | number>>) => i18n.t(key, params);
+translateDocument(i18n);
+
 const Debris = defineComponent("showcaseDebris", { defaults: { ttl: 3 } });
 
 const element = <T extends HTMLElement>(id: string) => {
@@ -58,23 +91,23 @@ void start().catch((error: unknown) => {
 async function start(): Promise<void> {
   const assetManager = new AssetManager().register<ArenaConfig>("json", async (url, signal) => {
     const response = await fetch(url, signal ? { signal } : undefined);
-    if (!response.ok) throw new Error(`资源加载失败: ${response.status} ${url}`);
+    if (!response.ok) throw new Error(t("assetFailed", { status: response.status, url }));
     return response.json() as Promise<ArenaConfig>;
   });
   assetManager.onProgress(({ loaded, total, current }) => {
     progress.style.transform = `scaleX(${total === 0 ? 0 : loaded / total})`;
-    loadingState.textContent = current ? `已载入 ${current.id}` : "读取场景配置";
+    loadingState.textContent = current ? t("assetLoaded", { id: current.id }) : t("readingConfig");
   });
   await assetManager.preload([{ id: "arena", type: "json", url: "/arena.json" }]);
   const config = assetManager.get<ArenaConfig>("arena");
-  if (!config) throw new Error("训练场配置为空");
+  if (!config) throw new Error(t("emptyConfig"));
 
-  loadingState.textContent = "初始化 Rapier WASM";
+  loadingState.textContent = t("initializingPhysics");
   const canvas = element<HTMLCanvasElement>("game");
   const rendererPlugin = three({ canvas, rendererOptions: { antialias: true } });
   configureRenderer(rendererPlugin.adapter);
   registerVisuals(rendererPlugin.adapter);
-  loadingState.textContent = "载入 GLB 模型";
+  loadingState.textContent = t("loadingModels");
   const [rifleGltf] = await Promise.all([
     new GLTFLoader().loadAsync("/models/Rifle.glb"),
     rendererPlugin.adapter.loadModel("soldier", "/models/Soldier.glb", { offset: [0, -.95, 0], castShadow: true }),
@@ -125,7 +158,7 @@ async function start(): Promise<void> {
     const { target } = event as { target?: unknown };
     if (typeof target !== "string" || !world.hasEntity(target)) return;
     if (target === player.id) {
-      element("runtime-state").textContent = "OPERATOR DOWN - PRESS T";
+      element("runtime-state").textContent = t("operatorDown");
       return;
     }
     const entity = world.entity(target);
@@ -183,13 +216,13 @@ async function start(): Promise<void> {
     marker.classList.remove("active");
     void marker.offsetWidth;
     marker.classList.add("active");
-    element("runtime-state").textContent = "PROJECTILE HIT";
+    element("runtime-state").textContent = t("projectileHit");
   });
   world.events.on("combat:damage", (event) => {
     const { target, amount } = event as { target?: unknown; amount?: number };
     if (target !== player.id) return;
     effects.playerHit(amount ?? 0);
-    element("runtime-state").textContent = "TAKING FIRE";
+    element("runtime-state").textContent = t("takingFire");
   });
 
   // mousedown 而不是 pointerdown：按住一个键后再按另一个键不会再触发 pointerdown
@@ -202,12 +235,12 @@ async function start(): Promise<void> {
     if (event.button === 0) shootCrosshair(world, player, rendererPlugin.adapter, viewModel, thirdPerson);
   });
   document.addEventListener("pointerlockchange", () => {
-    element("runtime-state").textContent = document.pointerLockElement === canvas ? "FPS CONTROL ACTIVE" : "CLICK TO ENGAGE";
+    element("runtime-state").textContent = t(document.pointerLockElement === canvas ? "controlActive" : "clickToEngage");
   });
   let grenades = 3;
   const updateGrenades = () => element("grenades").textContent = String(grenades);
   addEventListener("keydown", ({ code, repeat }) => {
-    if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = "RELOADING";
+    if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = t("reloading");
     if (code === "KeyT" && !repeat) { resetRange(world, player, config, rendererPlugin.adapter); grenades = 3; updateGrenades(); }
     if (code === "KeyG" && !repeat && grenades > 0 && !player.has(Dead)) {
       const directionVector = rendererPlugin.adapter.camera.getWorldDirection(new Vector3());
@@ -222,14 +255,14 @@ async function start(): Promise<void> {
       }).set(Renderable, { asset: "grenade" });
       grenades -= 1;
       updateGrenades();
-      element("runtime-state").textContent = "FRAG OUT";
+      element("runtime-state").textContent = t("fragOut");
     }
     if (code === "KeyV" && !repeat) {
       thirdPerson = !thirdPerson;
       if (thirdPerson) player.set(Renderable, { asset: "operator" });
       else player.remove(Renderable);
       viewModel.visible = !thirdPerson;
-      element("runtime-state").textContent = thirdPerson ? "THIRD PERSON" : "FIRST PERSON";
+      element("runtime-state").textContent = t(thirdPerson ? "thirdPerson" : "firstPerson");
     }
   });
   addEventListener("resize", () => resize(rendererPlugin.adapter, canvas));
@@ -239,7 +272,7 @@ async function start(): Promise<void> {
   loading.classList.add("done");
   loading.addEventListener("transitionend", () => loading.remove(), { once: true });
   setTimeout(() => loading.remove(), 600);
-  element("runtime-state").textContent = "RAPIER ONLINE";
+  element("runtime-state").textContent = t("physicsOnline");
 
   let previous = performance.now(), sampledAt = previous, frames = 0;
   const frame = (now: number) => {
@@ -725,8 +758,8 @@ function bindTelemetry(world: World, player: Entity): void {
       element("targets").textContent = String(activeBots.length);
       element("health").textContent = String(player.get(Health)?.current ?? 0);
       element("ammo").textContent = String(player.get(Ammo)?.magazine ?? 0);
-      element("grounded").textContent = player.get(CharacterMotor)?.grounded ? "YES" : "NO";
-      element("ai-state").textContent = states.includes("attack") ? "ATTACK" : states.includes("chase") ? "CHASE" : "IDLE";
+      element("grounded").textContent = t(player.get(CharacterMotor)?.grounded ? "yes" : "no");
+      element("ai-state").textContent = t(states.includes("attack") ? "attack" : states.includes("chase") ? "chase" : "idle");
     },
   });
 }
@@ -755,7 +788,7 @@ function shootCrosshair(
   if (transform) emitNoise(world, { source: player.id, faction: "blue", position: transform.position, radius: 20 });
   if (!projectile) return;
   viewModel.userData.recoil = 1;
-  element("runtime-state").textContent = "ROUND FIRED";
+  element("runtime-state").textContent = t("roundFired");
 }
 
 function resetRange(world: World, player: Entity, config: ArenaConfig, adapter: ReturnType<typeof three>["adapter"]): void {
@@ -784,7 +817,7 @@ function resetRange(world: World, player: Entity, config: ArenaConfig, adapter: 
   player.set(Ammo, { magazine: 12, reserve: 48 });
   player.set(Health, { current: 100 });
   if (player.has(Dead)) player.remove(Dead);
-  element("runtime-state").textContent = "RANGE RESET";
+  element("runtime-state").textContent = t("rangeReset");
 }
 
 function viewRelativeMove(x: number, z: number, yaw: number): [number, number] {

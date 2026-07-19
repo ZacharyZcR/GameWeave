@@ -1,6 +1,6 @@
 # @gameweave/character
 
-GameWeave 的 fixed-tick 输入、录制回放、角色移动、Controller 与 CameraRig。配合 `RapierPhysicsAdapter` 时，kinematic capsule 自动使用 move-and-slide、坡面限制、台阶与接地检测。
+Fixed-tick input, recording and playback, character movement, controllers, and camera rigs for GameWeave. With `RapierPhysicsAdapter`, kinematic capsules support move-and-slide, slope limits, steps, and grounded detection.
 
 ```ts
 const input = new InputManager().register("player", readInput);

@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="en">
   <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -10,33 +10,33 @@
   </head>
   <body>
     <main id="app">
-      <canvas id="game" aria-label="GameWeave 物理训练场"></canvas>
+      <canvas id="game" aria-label="GameWeave physics range" data-i18n-aria-label="canvasLabel"></canvas>
       <section id="loading" class="curtain" aria-live="polite">
-        <div class="loading-copy"><span>GAMEWEAVE</span><h1>正在编织训练场</h1><p id="loading-state">准备资源</p></div>
+        <div class="loading-copy"><span>GAMEWEAVE</span><h1 data-i18n="loadingTitle">WEAVING THE RANGE</h1><p id="loading-state" data-i18n="preparingAssets">PREPARING ASSETS</p></div>
         <div class="load-line"><i id="load-progress"></i></div>
       </section>
       <section id="error" class="curtain" hidden role="alert">
-        <div class="loading-copy"><span>STARTUP ERROR</span><h1>训练场未能启动</h1><p id="error-message"></p><button id="retry" type="button">重新加载</button></div>
+        <div class="loading-copy"><span>STARTUP ERROR</span><h1 data-i18n="startupFailed">RANGE FAILED TO START</h1><p id="error-message"></p><button id="retry" type="button" data-i18n="reload">RELOAD</button></div>
       </section>
       <header class="topbar">
         <div class="brand"><strong>GAMEWEAVE</strong><span>PHYSICS RANGE</span></div>
         <div class="runtime"><span id="runtime-state">INITIALIZING</span><b id="fps">0 FPS</b></div>
       </header>
-      <aside class="telemetry" aria-label="运行状态">
-        <div><span>敌方 AI</span><strong id="targets">0</strong></div>
-        <div><span>生命</span><strong id="health">100</strong></div>
-        <div><span>弹药</span><strong id="ammo">12</strong></div>
-        <div><span>手雷</span><strong id="grenades">3</strong></div>
-        <div><span>碰撞事件</span><strong id="collisions">0</strong></div>
-        <div><span>接地</span><strong id="grounded">NO</strong></div>
-        <div><span>AI 状态</span><strong id="ai-state">IDLE</strong></div>
+      <aside class="telemetry" aria-label="Runtime status" data-i18n-aria-label="runtimeStatus">
+        <div><span data-i18n="enemyAi">ENEMY AI</span><strong id="targets">0</strong></div>
+        <div><span data-i18n="health">HEALTH</span><strong id="health">100</strong></div>
+        <div><span data-i18n="ammo">AMMO</span><strong id="ammo">12</strong></div>
+        <div><span data-i18n="grenades">GRENADES</span><strong id="grenades">3</strong></div>
+        <div><span data-i18n="collisions">COLLISIONS</span><strong id="collisions">0</strong></div>
+        <div><span data-i18n="grounded">GROUNDED</span><strong id="grounded">NO</strong></div>
+        <div><span data-i18n="aiState">AI STATE</span><strong id="ai-state">IDLE</strong></div>
       </aside>
       <div class="crosshair" aria-hidden="true"><i></i><i></i></div>
       <div id="hit-marker" class="hit-marker" aria-hidden="true"></div>
       <div id="damage-vignette" class="damage-vignette" aria-hidden="true"></div>
       <footer class="controls">
-        <p><kbd>WASD</kbd> 移动 <kbd>SHIFT</kbd> 冲刺 <kbd>SPACE</kbd> 跳跃</p>
-        <p><kbd>LMB</kbd> 射击 <kbd>RMB</kbd> 瞄具 <kbd>G</kbd> 手雷 <kbd>V</kbd> 视角 <kbd>R</kbd> 换弹 <kbd>T</kbd> 重置</p>
+        <p><kbd>WASD</kbd> <span data-i18n="move">MOVE</span> <kbd>SHIFT</kbd> <span data-i18n="sprint">SPRINT</span> <kbd>SPACE</kbd> <span data-i18n="jump">JUMP</span></p>
+        <p><kbd>LMB</kbd> <span data-i18n="fire">FIRE</span> <kbd>RMB</kbd> <span data-i18n="ads">ADS</span> <kbd>G</kbd> <span data-i18n="grenade">GRENADE</span> <kbd>V</kbd> <span data-i18n="view">VIEW</span> <kbd>R</kbd> <span data-i18n="reloadAction">RELOAD</span> <kbd>T</kbd> <span data-i18n="reset">RESET</span></p>
       </footer>
     </main>
     <script type="module" src="/src/main.ts"></script>

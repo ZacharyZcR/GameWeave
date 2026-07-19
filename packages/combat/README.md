@@ -1,6 +1,6 @@
 # @gameweave/combat
 
-GameWeave 的生命、伤害、武器、弹药、hitscan、reload、projectile 与死亡结算。
+Health, damage, weapons, ammunition, hitscan, reloads, physical projectiles, and death resolution for GameWeave.
 
 ```ts
 const rifle = defineWeapon("rifle", { damage: { amount: 32, type: "ballistic" } });

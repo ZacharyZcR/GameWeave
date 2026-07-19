@@ -316,7 +316,26 @@ adapter.animations("soldier"); // ["Idle", "Run", "Shoot", ...]
 
 所有权分层：实体 root 的变换归 `Transform` 权威，动画只驱动模型内部节点——两者永不冲突，`ManualTransform` 语义不变。
 
-## 14. Three.js escape hatch
+## 14. I18n
+
+```ts
+import { createI18n, translateDocument } from "@gameweave/i18n";
+
+const i18n = createI18n({
+  messages: {
+    en: { score: "Score: {value}" },
+    zh: { score: "分数：{value}" },
+  },
+});
+
+i18n.t("score", { value: 10 }); // Score: 10
+i18n.setLocale("zh-CN");        // zh-CN -> zh -> en
+translateDocument(i18n);
+```
+
+`locale` 与 `fallbackLocale` 默认都是 `en`。HTML 可使用 `data-i18n`、`data-i18n-title`、`data-i18n-aria-label` 和 `data-i18n-placeholder`。
+
+## 15. Three.js escape hatch
 
 ```ts
 const adapter = game.service<ThreeAdapter>("renderer");

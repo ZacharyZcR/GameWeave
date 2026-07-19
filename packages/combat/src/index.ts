@@ -96,7 +96,7 @@ export function queueDamage(target: Entity, message: DamageInput): void {
 }
 
 export function fire(shooter: Entity, target: Entity, world: World): boolean {
-  const weapon = consumeShot(shooter);
+  const weapon = readyShot(shooter);
   if (!weapon) return false;
   let projectileEntity: Entity | undefined;
   if (weapon.delivery === "projectile") {
@@ -104,11 +104,13 @@ export function fire(shooter: Entity, target: Entity, world: World): boolean {
     if (!from || !to) return false;
     const direction = normalize(to.map((value, index) => value - from[index]!) as [number, number, number]);
     const position = muzzlePosition(from, direction, weapon.muzzle);
+    consumeShot(shooter, weapon);
     projectileEntity = spawnProjectile(world, {
       owner: shooter.id, position, direction, speed: weapon.projectileSpeed,
       damage: weapon.damage, damageType: weapon.damageType, lifetime: weapon.range / weapon.projectileSpeed,
     });
   } else {
+    consumeShot(shooter, weapon);
     queueDamage(target, { amount: weapon.damage, type: weapon.damageType, source: shooter.id, instigator: shooter.id, weapon: weapon.id });
   }
   world.events.emit("combat:fire", {
@@ -124,10 +126,12 @@ export function fireDirection(
   origin: [number, number, number],
   direction: [number, number, number],
 ): Entity | undefined {
-  const weapon = consumeShot(shooter);
+  const weapon = readyShot(shooter);
   if (!weapon) return undefined;
+  const normalizedDirection = normalize(direction);
+  consumeShot(shooter, weapon);
   const projectileEntity = spawnProjectile(world, {
-    owner: shooter.id, position: origin, direction: normalize(direction),
+    owner: shooter.id, position: origin, direction: normalizedDirection,
     speed: weapon.projectileSpeed, damage: weapon.damage, damageType: weapon.damageType,
     lifetime: weapon.range / weapon.projectileSpeed,
   });
@@ -362,12 +366,16 @@ export function combat() {
   });
 }
 
-function consumeShot(shooter: Entity): ReturnType<typeof Weapon.defaults> | undefined {
+function readyShot(shooter: Entity): ReturnType<typeof Weapon.defaults> | undefined {
   const weapon = shooter.get(Weapon), ammo = shooter.get(Ammo);
   if (!weapon || !ammo || shooter.has(Reloading) || ammo.magazine <= 0 || weapon.cooldownRemaining > 0) return undefined;
+  return weapon;
+}
+
+function consumeShot(shooter: Entity, weapon: ReturnType<typeof Weapon.defaults>): void {
+  const ammo = shooter.get(Ammo)!;
   shooter.set(Weapon, { cooldownRemaining: weapon.cooldown });
   shooter.set(Ammo, { magazine: ammo.magazine - 1 });
-  return weapon;
 }
 
 function normalize(direction: [number, number, number]): [number, number, number] {

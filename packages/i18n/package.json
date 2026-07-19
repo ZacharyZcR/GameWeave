@@ -1,0 +1,1 @@
+{"name":"@gameweave/i18n","version":"0.1.0","description":"Small runtime internationalization for GameWeave games","license":"MIT","type":"module","exports":{".":{"types":"./dist/index.d.ts","import":"./dist/index.js"}},"files":["dist","README.md"],"scripts":{"build":"tsc -p tsconfig.json","test":"vitest run","typecheck":"tsc -p tsconfig.json --noEmit"}}

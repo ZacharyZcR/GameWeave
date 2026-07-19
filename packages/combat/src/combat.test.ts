@@ -134,6 +134,18 @@ it("applies projectile damage only on impact and stops at obstacles", () => {
   expect(target.get(Health)?.current).toBe(60);
 });
 
+it("does not consume a projectile shot when its trajectory cannot be created", () => {
+  const game = createGame().use(combat());
+  const world = game.createWorld("range");
+  const weapon = defineWeapon("launcher", { delivery: projectile({ speed: 10 }), magazineSize: 2, damage: { amount: 10, type: "ballistic" } });
+  const shooter = equipWeapon(world.spawn({ id: "shooter" }), weapon);
+  const target = world.spawn({ id: "target" }).set(Transform, { position: [0, 0, 4] });
+
+  expect(fire(shooter, target, world)).toBe(false);
+  expect(shooter.get(Ammo)?.magazine).toBe(2);
+  expect(shooter.get(Weapon)?.cooldownRemaining).toBe(0);
+});
+
 it("explodes grenades on a deterministic fuse with distance falloff", () => {
   const game = createGame({ fixedStep: .1 }).use(physics()).use(combat());
   const world = game.createWorld("range");

@@ -1,6 +1,6 @@
 # @gameweave/debug
 
-GameWeave 的 Inspector、性能快照、截图、fixed-tick 输入录制与 deterministic scenario harness。
+Inspector snapshots, screenshots, fixed-tick input recording, and a deterministic scenario harness for GameWeave.
 
 ```ts
 const tools = debug();
