@@ -418,16 +418,16 @@ function spawnPropDebris(world: World, id: string, position: readonly [number, n
 
 // 真实 GLB 模型的接入验证：一只可射击的站桩狐狸 + 两只游荡狐狸 + 绕圈的 CesiumMan
 function spawnWildlife(world: World, adapter: ReturnType<typeof three>["adapter"]): void {
-  world.spawn({ id: "fox-static" }).set(Transform, { position: [6, -.98, -4] })
+  world.spawn({ id: "fox-static" }).set(Transform, { position: [6, .01, -4] })
     .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Survey" })
     .set(RigidBody, { type: "static" }).set(Collider, { shape: "sphere", radius: .7 })
     .set(Health, { current: 20, max: 20 }).set(DamageInbox, {});
-  world.spawn({ id: "fox-walk" }).set(Transform, { position: [-8, -.98, 6] })
+  world.spawn({ id: "fox-walk" }).set(Transform, { position: [-8, .01, 6] })
     .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Walk" });
-  world.spawn({ id: "fox-run" }).set(Transform, { position: [9, -.98, 8] })
+  world.spawn({ id: "fox-run" }).set(Transform, { position: [9, .01, 8] })
     .set(Renderable, { asset: "fox" }).set(ModelAnimation, { clip: "Run" });
   const walkClip = adapter.animations("cesium-man")[0] ?? "";
-  world.spawn({ id: "cesium-man" }).set(Transform, { position: [0, -.98, -2] })
+  world.spawn({ id: "cesium-man" }).set(Transform, { position: [0, .01, -2] })
     .set(Renderable, { asset: "cesium-man" }).set(ModelAnimation, { clip: walkClip });
 }
 
@@ -665,7 +665,7 @@ function installDemoSystems(
         const angle = seconds * patrol.angular;
         const yaw = Math.atan2(Math.cos(angle), Math.sin(angle)) + patrol.yawOffset;
         entity.set(Transform, {
-          position: [patrol.center[0] + Math.cos(angle) * patrol.radius, -.98, patrol.center[1] + Math.sin(angle) * patrol.radius],
+          position: [patrol.center[0] + Math.cos(angle) * patrol.radius, .01, patrol.center[1] + Math.sin(angle) * patrol.radius],
           quaternion: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
         });
       }
