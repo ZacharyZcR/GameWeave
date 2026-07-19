@@ -4,6 +4,22 @@
 
 GameWeave is a modular TypeScript game library built on top of Three.js. It packages recurring game systems—characters, weapons, AI, physics integration, UI, localization, debugging, and distribution—into composable and inspectable APIs designed for both human and AI-assisted development.
 
+Build browser-first 3D games without rewriting the same gameplay infrastructure for every project. GameWeave keeps simulation data explicit, runtime behavior deterministic where it matters, and platform integration replaceable. Start with one package, keep direct access to Three.js, and export completed games to the Web or a Tauri desktop shell.
+
+```ts
+import { createGame } from "@gameweave/core";
+import { three } from "@gameweave/three";
+import { physics, RapierPhysicsAdapter } from "@gameweave/physics";
+
+const renderer = three({ canvas: document.querySelector<HTMLCanvasElement>("#game")! });
+const game = createGame({ fixedStep: 1 / 60 })
+  .use(renderer)
+  .use(physics(new RapierPhysicsAdapter()));
+
+const world = game.createWorld("arena");
+await game.start(world);
+```
+
 The project is currently a local 0.1.0 release candidate. APIs may still change throughout the 0.x series and the packages have not yet been published to npm.
 
 ## Why GameWeave
@@ -80,6 +96,14 @@ Examples are private workspaces used for testing and demonstration. They are not
 - [0.1.0 completion audit](docs/COMPLETION_AUDIT.md)
 
 Some detailed design documents are currently written in Chinese. Public package documentation and user-facing defaults are English.
+
+## Community
+
+- [Contributing](CONTRIBUTING.md)
+- [Security policy](SECURITY.md)
+- [Support](SUPPORT.md)
+- [Code of conduct](CODE_OF_CONDUCT.md)
+- [Changelog](CHANGELOG.md)
 
 ## License
 

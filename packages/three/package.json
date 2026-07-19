@@ -9,7 +9,9 @@
       "import": "./dist/index.js"
     }
   },
-  "files": ["dist"],
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -23,5 +25,30 @@
   },
   "devDependencies": {
     "@types/three": "^0.180.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZacharyZcR/GameWeave.git",
+    "directory": "packages/three"
+  },
+  "homepage": "https://github.com/ZacharyZcR/GameWeave/tree/main/packages/three",
+  "bugs": {
+    "url": "https://github.com/ZacharyZcR/GameWeave/issues"
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "sideEffects": false,
+  "description": "Three.js rendering, assets, models, animation, and transform integration for GameWeave",
+  "keywords": [
+    "gameweave",
+    "game-engine",
+    "three.js",
+    "typescript",
+    "web-game"
+  ]
 }

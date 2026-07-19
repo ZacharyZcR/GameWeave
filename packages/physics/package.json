@@ -3,8 +3,15 @@
   "version": "0.1.0",
   "license": "MIT",
   "type": "module",
-  "exports": { ".": { "types": "./dist/index.d.ts", "import": "./dist/index.js" } },
-  "files": ["dist"],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
@@ -14,5 +21,30 @@
     "@dimforge/rapier3d-compat": "^0.19.3",
     "@gameweave/core": "^0.1.0",
     "@gameweave/three": "^0.1.0"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZacharyZcR/GameWeave.git",
+    "directory": "packages/physics"
+  },
+  "homepage": "https://github.com/ZacharyZcR/GameWeave/tree/main/packages/physics",
+  "bugs": {
+    "url": "https://github.com/ZacharyZcR/GameWeave/issues"
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "sideEffects": false,
+  "description": "Physics protocol, deterministic test adapter, and Rapier integration for GameWeave",
+  "keywords": [
+    "gameweave",
+    "game-engine",
+    "three.js",
+    "typescript",
+    "web-game"
+  ]
 }

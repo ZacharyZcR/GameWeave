@@ -16,5 +16,30 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "typecheck": "tsc -p tsconfig.json --noEmit"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ZacharyZcR/GameWeave.git",
+    "directory": "packages/core"
+  },
+  "homepage": "https://github.com/ZacharyZcR/GameWeave/tree/main/packages/core",
+  "bugs": {
+    "url": "https://github.com/ZacharyZcR/GameWeave/issues"
+  },
+  "engines": {
+    "node": ">=22.14.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "sideEffects": false,
+  "description": "Renderer-independent entity, component, system, and simulation core for GameWeave",
+  "keywords": [
+    "gameweave",
+    "game-engine",
+    "three.js",
+    "typescript",
+    "web-game"
+  ]
 }

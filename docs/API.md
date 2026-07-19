@@ -266,6 +266,22 @@ GameWeave 不自研 DOM 框架，只提供：
 
 绑定默认逐帧 pull 求值，值未变化不写 DOM。不做依赖追踪，不做脏检查框架。
 
+## 11.5 Audio
+
+```ts
+import { audio } from "@gameweave/audio";
+
+const sound = audio();
+game.use(sound);
+
+sound.adapter.register("shot", { synth: ctx => renderShotBuffer(ctx) });
+sound.adapter.register("theme", { url: "/audio/theme.ogg" });
+sound.adapter.play("shot", { position: [4, 1, -8], pitch: .95 });
+sound.adapter.setListener(cameraPosition, cameraForward);
+```
+
+`AudioAdapter` 是可替换服务：浏览器默认 `WebAudioAdapter`（PannerNode 空间化、sfx/music 总线、`synth` 程序化音源一次渲染缓存、`url` 音源异步解码），headless 与测试环境自动落到 `NullAudioAdapter`（记录播放调用，可断言）。声音触发是表现层职责——订阅 `combat:fire` 等事件调用 `play()`，模拟层不感知音频。
+
 ## 12. Inspector 与测试
 
 ```ts

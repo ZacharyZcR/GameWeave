@@ -1,6 +1,7 @@
 import { CharacterMotor, Controller, InputManager, Ragdoll, activateRagdoll, character } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
 import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload, throwGrenade } from "@gameweave/combat";
+import { audio, type AudioAdapter } from "@gameweave/audio";
 import { AssetManager, assets, createGame, defineComponent, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { createI18n, translateDocument } from "@gameweave/i18n";
@@ -140,14 +141,28 @@ async function start(): Promise<void> {
   const physicsAdapter = new RapierPhysicsAdapter({
     gravity: [0, -14, 0], snapToGround: .18, autostep: { height: .4, width: .25 },
   });
+  const audioPlugin = audio();
+  registerSounds(audioPlugin.adapter);
   const game = createGame({ fixedStep: 1 / 60, seed: "physics-range" })
     .use(assets(assetManager)).use(rendererPlugin).use(physics(physicsAdapter))
-    .use(character(input)).use(combat()).use(bots()).use(debug());
+    .use(character(input)).use(combat()).use(bots()).use(audioPlugin).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
   const effects = createEffects(rendererPlugin.adapter);
   installDemoSystems(world, rendererPlugin.adapter, player, viewModel, effects, () => ({ yaw, pitch, aiming, thirdPerson }));
   bindTelemetry(world, player);
+  const listenerForward = new Vector3();
+  world.addSystem({
+    name: "showcase.listener", phase: "render", optionalAfter: ["showcase.camera"],
+    run: () => {
+      const camera = rendererPlugin.adapter.camera;
+      camera.getWorldDirection(listenerForward);
+      audioPlugin.adapter.setListener(
+        [camera.position.x, camera.position.y, camera.position.z],
+        [listenerForward.x, listenerForward.y, listenerForward.z],
+      );
+    },
+  });
 
   let collisionCount = 0;
   world.events.on("physics:collisionStart", () => {
@@ -192,6 +207,7 @@ async function start(): Promise<void> {
   world.events.on("combat:explosion", (event) => {
     const { position } = event as { position?: [number, number, number] };
     if (!position) return;
+    audioPlugin.adapter.play("explosion", { position: [...position] });
     effects.explosion(position);
     const playerPosition = player.get(Transform)?.position;
     if (playerPosition) {
@@ -200,8 +216,17 @@ async function start(): Promise<void> {
     }
   });
   world.events.on("combat:fire", (event) => {
-    const { projectile } = event as { projectile?: unknown };
+    const { shooter, projectile } = event as { shooter?: unknown; projectile?: unknown };
     if (typeof projectile === "string" && world.hasEntity(projectile)) world.entity(projectile).set(Renderable, { asset: "bullet" });
+    if (shooter === player.id) audioPlugin.adapter.play("shot", { pitch: .96 + Math.random() * .08 });
+    else if (typeof shooter === "string" && world.hasEntity(shooter)) {
+      const position = world.entity(shooter).get(Transform)?.position;
+      if (position) audioPlugin.adapter.play("shot", { position: [...position], volume: .7, pitch: .88 + Math.random() * .08 });
+    }
+  });
+  world.events.on("combat:reloadStart", (event) => {
+    const { entity } = event as { entity?: unknown };
+    if (entity === player.id) audioPlugin.adapter.play("reload");
   });
   world.events.on("combat:projectileHit", (event) => {
     const { owner, target, point, normal } = event as {
@@ -209,7 +234,10 @@ async function start(): Promise<void> {
       point?: [number, number, number]; normal?: [number, number, number];
     };
     const fleshy = typeof target === "string" && world.hasEntity(target) && world.entity(target).has(Health);
-    if (point && normal) effects.impact(point, normal, fleshy ? "flesh" : "dust");
+    if (point && normal) {
+      audioPlugin.adapter.play("impact", { position: [...point], pitch: fleshy ? .8 : 1.1, volume: .8 });
+      effects.impact(point, normal, fleshy ? "flesh" : "dust");
+    }
     if (fleshy && target !== player.id) effects.flash(target);
     if (owner !== player.id || !fleshy) return;
     const marker = element("hit-marker");
@@ -221,6 +249,7 @@ async function start(): Promise<void> {
   world.events.on("combat:damage", (event) => {
     const { target, amount } = event as { target?: unknown; amount?: number };
     if (target !== player.id) return;
+    audioPlugin.adapter.play("hurt", { volume: Math.min(1, .5 + (amount ?? 0) * .02) });
     effects.playerHit(amount ?? 0);
     element("runtime-state").textContent = t("takingFire");
   });
@@ -254,6 +283,7 @@ async function start(): Promise<void> {
         damage: 90, radius: 5.5, fuse: 2.2, impulse: 9,
       }).set(Renderable, { asset: "grenade" });
       grenades -= 1;
+      audioPlugin.adapter.play("throw");
       updateGrenades();
       element("runtime-state").textContent = t("fragOut");
     }
@@ -411,6 +441,38 @@ function part<T extends Object3D>(
   object.rotation.set(...rotation);
   parent.add(object);
   return object;
+}
+
+// 程序化合成音效：手填样本，零外部素材（听感不满意直接调各自的包络/频率）
+function synthBuffer(ctx: BaseAudioContext, duration: number, fill: (t: number) => number): AudioBuffer {
+  const rate = ctx.sampleRate;
+  const buffer = ctx.createBuffer(1, Math.ceil(duration * rate), rate);
+  const data = buffer.getChannelData(0);
+  for (let index = 0; index < data.length; index += 1) data[index] = fill(index / rate);
+  return buffer;
+}
+
+function registerSounds(adapter: AudioAdapter): void {
+  adapter.register("shot", { synth: (ctx) => synthBuffer(ctx, .14, (t) => {
+    const sweep = 320 - t * 1500;
+    return (Math.sign(Math.sin(2 * Math.PI * sweep * t)) * .5 + (Math.random() * 2 - 1) * .5) * Math.exp(-t * 42) * .8;
+  }) });
+  adapter.register("impact", { synth: (ctx) => synthBuffer(ctx, .09, (t) =>
+    (Math.random() * 2 - 1) * Math.exp(-t * 60) * .6,
+  ) });
+  adapter.register("explosion", { synth: (ctx) => synthBuffer(ctx, .8, (t) =>
+    ((Math.random() * 2 - 1) * .55 + Math.sin(2 * Math.PI * (90 - t * 70) * t) * .7) * Math.exp(-t * 4.5),
+  ) });
+  adapter.register("reload", { synth: (ctx) => synthBuffer(ctx, .3, (t) => {
+    const click = (at: number) => Math.abs(t - at) < .012 ? (Math.random() * 2 - 1) * Math.exp(-Math.abs(t - at) * 300) : 0;
+    return (click(.04) + click(.2)) * .8;
+  }) });
+  adapter.register("hurt", { synth: (ctx) => synthBuffer(ctx, .18, (t) =>
+    Math.sin(2 * Math.PI * (180 - t * 350) * t) * Math.exp(-t * 18) * .7,
+  ) });
+  adapter.register("throw", { synth: (ctx) => synthBuffer(ctx, .12, (t) =>
+    (Math.random() * 2 - 1) * Math.exp(-t * 34) * .3,
+  ) });
 }
 
 // 手搓模型的内层在 userData.model；registerModel 的克隆结构是 Group → [scene]

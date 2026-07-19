@@ -1,8 +1,8 @@
 # 0.1.0 发布决策
 
-状态：Ready for local packaging；尚未发布到 npm。
+状态：Ready for release hardening；尚未发布到 npm。
 
-- **包拆分**：保留八个按职责划分的包，避免安装未使用的 gameplay 模块。
+- **包拆分**：发布 `packages/*` 下的十一个公共包；`examples/*` 与 `tests/*` 保持 private，不发布到 npm。
 - **稳定范围**：0.1.0 保证 Definition ID、World/Entity/Component/System、Plugin、adapter 边界和序列化 version 语义；具体 gameplay 字段仍允许在 0.x 调整。
 - **License**：MIT。
 - **浏览器范围**：支持具备 ES2022、WebGL2、Web Audio 和 Pointer Lock 的现代 evergreen 浏览器；headless Core 不依赖 DOM。
@@ -20,4 +20,4 @@ gameweave export windows
 
 `build` 生成 `dist/gameweave.manifest.json`，`export web` 生成带版本号的 zip。桌面导出使用 Tauri 2，并且必须在目标操作系统上构建；追加 `--prepare` 可以只生成 `src-tauri` 而不编译 installer。
 
-发布前门禁：`npm run typecheck`、`npm test`、`npm run build`、所有公共包 `npm pack --dry-run`。
+发布前门禁：`npm run typecheck`、`npm test`、`npm run build`、`npm run release:check`。GitHub Release 的版本 tag 必须与全部公共包版本一致，发布 workflow 按内部依赖拓扑逐包发布。

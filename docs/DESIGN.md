@@ -285,6 +285,7 @@ Effect           Cooldown         Interactable
 @gameweave/character  角色移动、控制器和相机
 @gameweave/combat     生命、伤害、武器和投射物
 @gameweave/bots       感知、目标、导航和行为
+@gameweave/audio      音频 adapter、空间化播放与程序化音源
 @gameweave/ui         DOM 状态绑定与屏幕投影
 @gameweave/debug      Inspector、录制、回放和性能数据
 ```

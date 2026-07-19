@@ -1,0 +1,46 @@
+name: Package or API proposal
+description: Propose a new public package or a significant public API boundary
+title: "[Proposal]: "
+labels: [proposal]
+body:
+  - type: input
+    id: name
+    attributes:
+      label: Proposed package or API name
+      placeholder: "@gameweave/audio"
+    validations:
+      required: true
+  - type: textarea
+    id: responsibility
+    attributes:
+      label: Single responsibility
+      description: State what this boundary owns in one sentence.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Repeated game logic
+      description: Show at least two concrete use cases that justify extracting this abstraction.
+    validations:
+      required: true
+  - type: textarea
+    id: data
+    attributes:
+      label: Data ownership and dependencies
+      description: Explain core data, ownership, lifecycle, and dependencies on existing packages.
+    validations:
+      required: true
+  - type: textarea
+    id: api
+    attributes:
+      label: Minimal API sketch
+      render: typescript
+    validations:
+      required: true
+  - type: textarea
+    id: exclusions
+    attributes:
+      label: Explicit non-goals
+    validations:
+      required: true

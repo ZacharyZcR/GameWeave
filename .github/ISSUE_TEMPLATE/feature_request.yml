@@ -1,0 +1,57 @@
+name: Feature request
+description: Propose a focused improvement to an existing package
+title: "[Feature]: "
+labels: [enhancement]
+body:
+  - type: dropdown
+    id: package
+    attributes:
+      label: Package
+      options:
+        [
+          core,
+          three,
+          physics,
+          character,
+          combat,
+          bots,
+          i18n,
+          ui,
+          debug,
+          cli,
+          export-tauri,
+          multiple packages,
+        ]
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: Describe the concrete game-development problem, not only the desired API.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: example
+    attributes:
+      label: Intended API
+      render: typescript
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This belongs in a reusable engine package rather than one specific game.
+          required: true
+        - label: I searched existing issues and the roadmap.
+          required: true
