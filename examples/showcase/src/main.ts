@@ -25,6 +25,7 @@ import {
   SphereGeometry,
   Vector3,
 } from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 interface ArenaConfig {
   readonly targets: readonly [number, number, number][];
@@ -74,11 +75,13 @@ async function start(): Promise<void> {
   configureRenderer(rendererPlugin.adapter);
   registerVisuals(rendererPlugin.adapter);
   loadingState.textContent = "载入 GLB 模型";
-  await Promise.all([
+  const [rifleGltf] = await Promise.all([
+    new GLTFLoader().loadAsync("/models/Rifle.glb"),
     rendererPlugin.adapter.loadModel("fox", "/models/Fox.glb", { scale: .018, castShadow: true }),
     rendererPlugin.adapter.loadModel("cesium-man", "/models/CesiumMan.glb", { castShadow: true }),
+    rendererPlugin.adapter.loadModel("soldier", "/models/Soldier.glb", { offset: [0, -.95, 0], castShadow: true }),
   ]);
-  const viewModel = createViewModel();
+  const viewModel = createViewModel(rifleGltf.scene);
   rendererPlugin.adapter.camera.add(viewModel);
   rendererPlugin.adapter.scene.add(rendererPlugin.adapter.camera);
 
@@ -289,7 +292,6 @@ function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("ground", () => mesh(new BoxGeometry(40, .02, 40), 0x252925, { receive: true }));
   adapter.registerAsset("crate", () => mesh(new BoxGeometry(1, 1, 1), 0x68715f, { cast: true, receive: true }));
   adapter.registerAsset("barrier", () => mesh(new BoxGeometry(3.5, 2, .65), 0x3c423c, { cast: true, receive: true }));
-  adapter.registerAsset("target", () => createSoldier());
   adapter.registerAsset("operator", () => createSoldier({ armor: 0x35608a, visor: 0x8fb6dd }));
   adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
   adapter.registerAsset("crate-shard", () => mesh(new BoxGeometry(.34, .34, .34), 0x565e4d, { cast: true }));
@@ -344,28 +346,27 @@ function createSoldier(palette: { armor?: number; visor?: number } = {}): Object
   return root;
 }
 
-function createViewModel(): Group {
+// 真实枪模的姿态常量：观感不对时只调这四个
+const RIFLE_SCALE = 1.5;
+const RIFLE_YAW = Math.PI;          // 模型原生朝向不是 -z 时调（π 掉头，±π/2 转 90 度）
+const RIFLE_POSITION = [0, -.02, -.45] as const;
+const RIFLE_MUZZLE_Z = -1.35;
+
+function createViewModel(rifle: Object3D): Group {
   const root = new Group();
   root.position.set(.38, -.38, -.72);
   const glove = new MeshStandardMaterial({ color: 0x292d29, roughness: .9 });
   const sleeve = new MeshStandardMaterial({ color: 0x596052, roughness: .86 });
-  const gun = new MeshStandardMaterial({ color: 0x202321, roughness: .48, metalness: .58 });
-  const accent = new MeshStandardMaterial({ color: 0xb98535, roughness: .58, metalness: .35 });
   part(root, new BoxGeometry(.16, .17, .48), sleeve, [-.27, -.04, .14], [-.18, .08, 0]);
   part(root, new BoxGeometry(.14, .15, .26), glove, [-.18, .01, -.17], [-.1, 0, 0]);
   part(root, new BoxGeometry(.16, .17, .42), sleeve, [.27, -.08, .1], [.18, -.08, 0]);
   part(root, new BoxGeometry(.14, .15, .24), glove, [.17, -.01, -.2], [.08, 0, 0]);
-  part(root, new BoxGeometry(.18, .2, .78), gun, [0, .08, -.43]);
-  part(root, new BoxGeometry(.12, .11, .44), accent, [0, .08, -.97]);
-  part(root, new CylinderGeometry(.032, .032, .55, 10), gun, [0, .08, -1.42], [Math.PI / 2, 0, 0]);
-  part(root, new BoxGeometry(.1, .04, .14), gun, [0, .17, -.48]);
-  part(root, new BoxGeometry(.03, .08, .05), gun, [-.05, .23, -.48]);
-  part(root, new BoxGeometry(.03, .08, .05), gun, [.05, .23, -.48]);
-  part(root, new BoxGeometry(.016, .07, .03), accent, [0, .215, -1.12]);
-  part(root, new BoxGeometry(.08, .16, .22), gun, [0, -.1, -.22], [-.22, 0, 0]);
-  part(root, new BoxGeometry(.1, .2, .3), gun, [0, -.12, -.53], [.18, 0, 0]);
+  rifle.scale.setScalar(RIFLE_SCALE);
+  rifle.rotation.y = RIFLE_YAW;
+  rifle.position.set(...RIFLE_POSITION);
+  root.add(rifle);
   const muzzle = new Object3D();
-  muzzle.position.set(0, .08, -1.72);
+  muzzle.position.set(0, .06, RIFLE_MUZZLE_Z);
   root.add(muzzle);
   root.userData.muzzle = muzzle;
   root.userData.recoil = 0;
@@ -384,6 +385,11 @@ function part<T extends Object3D>(
   object.rotation.set(...rotation);
   parent.add(object);
   return object;
+}
+
+// 手搓模型的内层在 userData.model；registerModel 的克隆结构是 Group → [scene]
+function innerModel(object: Object3D | undefined): Object3D | undefined {
+  return (object?.userData.model as Object3D | undefined) ?? object?.children[0];
 }
 
 function charProp(adapter: ReturnType<typeof three>["adapter"], id: string, ratio: number): void {
@@ -449,13 +455,14 @@ function buildArena(world: World, config: ArenaConfig): Entity {
   for (const [index, position] of config.barriers.entries()) spawnBarrier(world, index, position);
   for (const [index, position] of config.crates.entries()) spawnCrate(world, index, position);
   for (const [index, position] of config.targets.entries()) {
-    world.spawn({ id: `target-${index}` }).set(Transform, { position }).set(Renderable, { asset: "target" })
+    world.spawn({ id: `target-${index}` }).set(Transform, { position }).set(Renderable, { asset: "soldier" })
+      .set(ModelAnimation, { clip: "Idle" })
       .set(RigidBody, { type: "dynamic", lockRotations: true }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
       .set(Health, { current: 40, max: 40 }).set(DamageInbox, {}).set(Faction, { id: "red" })
       .set(Sensor, { sight: 36, hearing: 22 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 18 })
       .set(StateMachine, {}).set(BotController, {}).set(Weapon, {
         id: "ai-rifle", damage: 2, cooldown: .7, range: 36, delivery: "projectile", projectileSpeed: 24,
-        muzzle: [.24, .16, 1.21],
+        muzzle: [0, .3, .6],
       })
       .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 }).set(Ragdoll, {});
   }
@@ -644,16 +651,19 @@ function installDemoSystems(
         if (!targetId || !botPosition || !world.hasEntity(targetId)) continue;
         const targetPosition = world.entity(targetId).get(Transform)?.position;
         const object = adapter.object(bot.id);
-        const model = object?.userData.model as Object3D | undefined;
+        const model = innerModel(object);
         if (!targetPosition || !model) continue;
-        model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
+        // 手搓模型朝 -z，GLB soldier 朝 +z，差半圈
+        const flip = object?.userData.model ? 0 : Math.PI;
+        model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]) + flip;
       }
     },
   });
+  // yawOffset：模型不朝 +z 时补偿（π 掉头，±π/2 转 90 度）
   const patrols: Record<string, { center: [number, number]; radius: number; angular: number; yawOffset: number }> = {
     "fox-walk": { center: [-8, 6], radius: 4, angular: .45, yawOffset: 0 },
     "fox-run": { center: [9, 8], radius: 3, angular: 1.1, yawOffset: 0 },
-    "cesium-man": { center: [0, -2], radius: 7, angular: .28, yawOffset: Math.PI / 2 },
+    "cesium-man": { center: [0, -2], radius: 7, angular: .18, yawOffset: 0 },
   };
   world.addSystem({
     name: "showcase.wildlife", phase: "fixedUpdate",
@@ -663,7 +673,8 @@ function installDemoSystems(
         if (!world.hasEntity(id)) continue;
         const entity = world.entity(id);
         const angle = seconds * patrol.angular;
-        const yaw = Math.atan2(Math.cos(angle), Math.sin(angle)) + patrol.yawOffset;
+        // 圆周切线方向 [-sin, 0, cos]；+z forward 模型对准它的解是 -angle
+        const yaw = -angle + patrol.yawOffset;
         entity.set(Transform, {
           position: [patrol.center[0] + Math.cos(angle) * patrol.radius, .01, patrol.center[1] + Math.sin(angle) * patrol.radius],
           quaternion: [0, Math.sin(yaw / 2), 0, Math.cos(yaw / 2)],
@@ -699,11 +710,19 @@ function installDemoSystems(
     run: ({ dt }) => {
       for (const entity of world.query(Transform, RigidBody)) {
         const object = adapter.object(entity.id);
-        const bones = object?.userData.bones as Record<string, Object3D> | undefined;
-        const model = object?.userData.model as Object3D | undefined;
-        if (!object || !bones || !model || entity.get(Ragdoll)?.active) continue;
+        if (!object || entity.get(Ragdoll)?.active) continue;
         const velocity = entity.get(RigidBody)?.velocity ?? [0, 0, 0];
         const speed = Math.hypot(velocity[0], velocity[2]);
+        const bones = object.userData.bones as Record<string, Object3D> | undefined;
+        const model = object.userData.model as Object3D | undefined;
+        if (!bones || !model) {
+          // 真实模型：走 ModelAnimation 组件，按速度切 clip
+          const asset = entity.get(Renderable)?.asset;
+          if (!asset || adapter.animations(asset).length === 0) continue;
+          const clip = speed > .4 ? "Run" : "Idle";
+          if (entity.get(ModelAnimation)?.clip !== clip) entity.set(ModelAnimation, { clip });
+          continue;
+        }
         const blend = Number(object.userData.runBlend ?? 0);
         const nextBlend = blend + (Math.min(1, speed / 2.2) - blend) * Math.min(1, dt * 10);
         const phase = Number(object.userData.runPhase ?? 0) + (nextBlend > .02 ? dt * (4 + speed * 2.6) : 0);
@@ -724,11 +743,17 @@ function installDemoSystems(
       for (const entity of world.query(Ragdoll)) {
         const ragdoll = entity.get(Ragdoll);
         const object = adapter.object(entity.id);
-        const model = object?.userData.model as Object3D | undefined;
+        const model = innerModel(object);
         const bones = object?.userData.bones as Record<string, Object3D> | undefined;
-        if (!ragdoll || !model || !bones) continue;
+        if (!ragdoll || !model) continue;
         const t = ragdoll.active ? Math.min(1, ragdoll.elapsed / ragdoll.duration) : 0;
         const eased = 1 - (1 - t) ** 3;
+        if (!bones) {
+          // 真实模型没有手搓骨骼映射：整体后仰倒地
+          model.rotation.x = eased * -1.5;
+          model.position.y = (object?.userData.model ? 0 : -.95) + eased * .12;
+          continue;
+        }
         model.rotation.z = eased * 1.42;
         model.rotation.x = eased * -.28;
         model.position.y = eased * -.72;
