@@ -6,13 +6,22 @@ import {
   type World,
 } from "@gameweave/core";
 import {
+  AnimationMixer,
+  Group,
+  LoopOnce,
+  LoopRepeat,
+  Mesh,
   Object3D,
   ObjectLoader,
   PerspectiveCamera,
   Scene,
   WebGLRenderer,
+  type AnimationAction,
+  type AnimationClip,
   type WebGLRendererParameters,
 } from "three";
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { clone as cloneSkeleton } from "three/examples/jsm/utils/SkeletonUtils.js";
 
 export interface TransformData extends Record<string, unknown> {
   position: [number, number, number];
@@ -45,6 +54,28 @@ export const ManualTransform = defineComponent("manualTransform", {
   defaults: { enabled: true },
 });
 
+// 动画意图：可序列化、可 inspect。表现由 adapter 的 AnimationMixer 驱动。
+export const ModelAnimation = defineComponent("modelAnimation", {
+  defaults: { clip: "", loop: true, speed: 1, transition: .2 },
+});
+
+export interface ModelSource {
+  readonly scene: Object3D;
+  readonly animations?: readonly AnimationClip[];
+}
+
+export interface ModelOptions {
+  readonly scale?: number;
+  readonly offset?: readonly [number, number, number];
+  readonly castShadow?: boolean;
+}
+
+interface AnimationState {
+  readonly mixer: AnimationMixer;
+  readonly actions: ReadonlyMap<string, AnimationAction>;
+  current: string;
+}
+
 export type ObjectFactory = () => Object3D;
 
 export interface ThreeAdapterOptions {
@@ -61,9 +92,11 @@ export class ThreeAdapter {
   readonly native: WebGLRenderer | undefined;
   #assets = new Map<string, ObjectFactory>();
   #assetTemplates: Object3D[] = [];
+  #modelClips = new Map<string, readonly AnimationClip[]>();
   #objects = new Map<EntityId, Object3D>();
   #managed = new Set<EntityId>();
   #synced = new Map<EntityId, TransformData>();
+  #animations = new Map<EntityId, AnimationState>();
 
   constructor(options: ThreeAdapterOptions = {}) {
     this.scene = options.scene ?? new Scene();
@@ -96,6 +129,32 @@ export class ThreeAdapter {
     this.registerAsset(id, () => cloneOwned(template));
   }
 
+  registerModel(id: string, model: ModelSource, options: ModelOptions = {}): this {
+    const template = new Group();
+    template.add(model.scene);
+    if (options.scale !== undefined) model.scene.scale.setScalar(options.scale);
+    if (options.offset) model.scene.position.set(...options.offset);
+    if (options.castShadow) {
+      model.scene.traverse((child) => {
+        if (child instanceof Mesh) child.castShadow = true;
+      });
+    }
+    this.#assetTemplates.push(template);
+    // 骨骼安全克隆；几何共享，材质独立（每实例可单独改色而不串染）
+    this.registerAsset(id, () => cloneMaterials(cloneSkeleton(template)));
+    this.#modelClips.set(id, [...(model.animations ?? [])]);
+    return this;
+  }
+
+  async loadModel(id: string, url: string, options: ModelOptions = {}, loader = new GLTFLoader()): Promise<void> {
+    const gltf = await loader.loadAsync(url);
+    this.registerModel(id, { scene: gltf.scene, animations: gltf.animations }, options);
+  }
+
+  animations(asset: string): readonly string[] {
+    return (this.#modelClips.get(asset) ?? []).map((clip) => clip.name);
+  }
+
   attach(entity: EntityId, object: Object3D, managed = false): void {
     this.detach(entity);
     this.#objects.set(entity, object);
@@ -107,7 +166,7 @@ export class ThreeAdapter {
     return this.#objects.get(entity);
   }
 
-  sync(world: World): void {
+  sync(world: World, dt = 0): void {
     const alive = new Set<EntityId>();
     for (const entity of world.query(Transform, Renderable)) {
       alive.add(entity.id);
@@ -121,6 +180,23 @@ export class ThreeAdapter {
         if (!factory) throw new Error(`Unknown Three asset: ${renderable.asset}`);
         object = factory();
         this.attach(entity.id, object, true);
+        const clips = this.#modelClips.get(renderable.asset);
+        if (clips?.length) {
+          // mixer 绑内层：root 的变换归 Transform 权威，动画只能动模型内部节点
+          const mixer = new AnimationMixer(object.children[0] ?? object);
+          this.#animations.set(entity.id, {
+            mixer,
+            actions: new Map(clips.map((clip) => [clip.name, mixer.clipAction(clip)])),
+            current: "",
+          });
+        }
+      }
+
+      const animationState = this.#animations.get(entity.id);
+      if (animationState) {
+        const animation = entity.get(ModelAnimation);
+        if (animation) applyAnimation(animationState, animation);
+        animationState.mixer.update(dt);
       }
 
       if (!entity.has(ManualTransform)) {
@@ -149,6 +225,8 @@ export class ThreeAdapter {
   detach(entity: EntityId): void {
     const object = this.#objects.get(entity);
     if (!object) return;
+    this.#animations.get(entity)?.mixer.stopAllAction();
+    this.#animations.delete(entity);
     object.removeFromParent();
     if (this.#managed.has(entity)) disposeObject(object);
     this.#managed.delete(entity);
@@ -162,6 +240,32 @@ export class ThreeAdapter {
     this.#assetTemplates = [];
     this.native?.dispose();
   }
+}
+
+function applyAnimation(state: AnimationState, animation: ReturnType<typeof ModelAnimation.defaults>): void {
+  if (animation.clip !== state.current) {
+    state.actions.get(state.current)?.fadeOut(animation.transition);
+    const next = animation.clip ? state.actions.get(animation.clip) : undefined;
+    if (next) {
+      next.reset().setLoop(animation.loop ? LoopRepeat : LoopOnce, Infinity).fadeIn(animation.transition).play();
+      next.clampWhenFinished = !animation.loop;
+    }
+    state.current = animation.clip;
+  }
+  const active = state.actions.get(state.current);
+  if (active) active.timeScale = animation.speed;
+}
+
+function cloneMaterials(root: Object3D): Object3D {
+  root.traverse((object) => {
+    const candidate = object as Object3D & { material?: { clone(): unknown } | { clone(): unknown }[] };
+    if (Array.isArray(candidate.material)) {
+      candidate.material = candidate.material.map((material) => material.clone()) as typeof candidate.material;
+    } else if (candidate.material) {
+      candidate.material = candidate.material.clone() as typeof candidate.material;
+    }
+  });
+  return root;
 }
 
 function cloneOwned(template: Object3D): Object3D {
@@ -197,11 +301,11 @@ export function three(options: ThreeAdapterOptions = {}): GamePlugin & {
       id: "gameweave.three",
       install: (game) => game.provide("renderer", adapter),
       setupWorld: (world) => {
-        world.register(Transform).register(Renderable).register(ManualTransform);
+        world.register(Transform).register(Renderable).register(ManualTransform).register(ModelAnimation);
         world.addSystem({
           name: "three.sync",
           phase: "render",
-          run: () => adapter.sync(world),
+          run: ({ dt }) => adapter.sync(world, dt),
         });
         world.addSystem({
           name: "three.render",

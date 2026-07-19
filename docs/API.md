@@ -294,7 +294,29 @@ await scenario("single shot applies exact damage", createCombatWorld, async ({ w
 
 GameWeave 提供底层 deterministic scenario harness，不包装断言库。浏览器交互由示例工程和调用方选择 Playwright 等工具验证。
 
-## 13. Three.js escape hatch
+## 13. 真实模型
+
+```ts
+const adapter = game.service<ThreeAdapter>("renderer");
+await adapter.loadModel("soldier", "/models/soldier.glb", {
+  scale: 1.2, offset: [0, -.95, 0], castShadow: true,
+});
+
+const enemy = world.spawn()
+  .set(Transform, { position: [4, 0, -8] })
+  .set(Renderable, { asset: "soldier" })
+  .set(ModelAnimation, { clip: "Run", speed: 1.4 });
+
+adapter.animations("soldier"); // ["Idle", "Run", "Shoot", ...]
+```
+
+`loadModel()` 用 GLTFLoader 加载 GLB/GLTF；`registerModel(id, { scene, animations }, options)` 是它的纯逻辑底层，可传入任何来源的模型（自定义 loader、程序化生成、测试桩）。注册后模型就是普通资产：`Renderable.asset` 引用，实例化用骨骼安全克隆，几何共享、材质每实例独立。
+
+`ModelAnimation` 是可序列化的动画意图：`{ clip, loop, speed, transition }`。gameplay 代码只写组件（例如 Bot 进入 chase 时 `set(ModelAnimation, { clip: "Run" })`），adapter 负责 AnimationMixer 的 crossfade、循环与 clamp。`clip: ""` 表示淡出停止。
+
+所有权分层：实体 root 的变换归 `Transform` 权威，动画只驱动模型内部节点——两者永不冲突，`ManualTransform` 语义不变。
+
+## 14. Three.js escape hatch
 
 ```ts
 const adapter = game.service<ThreeAdapter>("renderer");
