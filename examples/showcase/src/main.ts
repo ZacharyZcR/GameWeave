@@ -21,7 +21,6 @@ import {
   MeshStandardMaterial,
   Object3D,
   PCFSoftShadowMap,
-  PlaneGeometry,
   SphereGeometry,
   Vector3,
 } from "three";
@@ -182,7 +181,7 @@ function configureRenderer(adapter: ReturnType<typeof three>["adapter"]): void {
 }
 
 function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
-  adapter.registerAsset("ground", () => mesh(new PlaneGeometry(40, 40), 0x252925, { receive: true, rotateX: -Math.PI / 2 }));
+  adapter.registerAsset("ground", () => mesh(new BoxGeometry(40, .02, 40), 0x252925, { receive: true }));
   adapter.registerAsset("crate", () => mesh(new BoxGeometry(1, 1, 1), 0x68715f, { cast: true, receive: true }));
   adapter.registerAsset("barrier", () => mesh(new BoxGeometry(3.5, 2, .65), 0x3c423c, { cast: true, receive: true }));
   adapter.registerAsset("target", createSoldier);
