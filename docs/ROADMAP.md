@@ -43,6 +43,9 @@
 - [x] FPS character motor
 - [x] 输入、相机与 pointer lock
 - [x] 基础 collider/physics adapter
+- [x] Rapier 生产 adapter、碰撞事件与 capsule character controller
+- [x] 统一 AssetManager、并发去重、预加载进度与失败重试
+- [x] 可交互 Rapier showcase（角色、刚体堆叠、碰撞事件、raycast）
 - [x] Health、Damage、Hitscan Weapon
 - [x] HUD DOM binding
 

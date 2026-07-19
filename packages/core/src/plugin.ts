@@ -4,6 +4,7 @@ import type { World } from "./world.js";
 export interface GamePlugin {
   readonly id: string;
   readonly install?: (game: Game) => void;
+  readonly start?: (game: Game) => void | Promise<void>;
   readonly setupWorld?: (world: World) => void;
 }
 

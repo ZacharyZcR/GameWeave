@@ -64,15 +64,25 @@ npm run build
 ```text
 @gameweave/core       模拟核心、序列化、Plugin、Prefab
 @gameweave/three      Three.js 表现与资产适配
-@gameweave/physics    物理协议与基础 adapter
-@gameweave/character  输入、角色移动与相机数据
+@gameweave/physics    物理协议、Rapier solver 与基础测试 adapter
+@gameweave/character  输入、胶囊角色移动与相机数据
 @gameweave/combat     生命、伤害、武器与弹药
 @gameweave/bots       感知、目标、状态与行为
 @gameweave/ui         DOM 状态绑定与屏幕投影
 @gameweave/debug      Inspector、输入录制与 Scenario
 ```
 
-可构建的浏览器 FPS vertical slice 位于 `examples/fps`。
+可构建的浏览器示例：
+
+- `examples/showcase`：Rapier 物理训练场，集中展示资源预加载、胶囊角色、刚体堆叠、碰撞事件、raycast 与战斗状态。
+- `examples/fps`：最小 FPS vertical slice。
+- `examples/steel-front-slice`：现有游戏迁移切片。
+
+运行完整 showcase：
+
+```bash
+npm run dev --workspace @gameweave/example-showcase
+```
 
 ## License
 

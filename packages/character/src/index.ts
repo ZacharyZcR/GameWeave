@@ -1,5 +1,5 @@
 import { defineComponent, definePlugin } from "@gameweave/core";
-import { RigidBody } from "@gameweave/physics";
+import { RigidBody, supportsCharacterMovement, type PhysicsAdapter } from "@gameweave/physics";
 import { Transform } from "@gameweave/three";
 
 export interface InputSnapshot {
@@ -76,7 +76,7 @@ export class InputManager {
 }
 
 export const CharacterMotor = defineComponent("characterMotor", {
-  defaults: { speed: 5, sprintSpeed: 9, jumpSpeed: 5, grounded: true },
+  defaults: { speed: 5, sprintSpeed: 9, jumpSpeed: 5, gravity: 20, verticalSpeed: 0, grounded: true },
 });
 
 export const Controller = defineComponent("controller", {
@@ -103,7 +103,8 @@ export function character(input = new InputManager()) {
           name: "character.move", phase: "fixedUpdate",
           after: ["character.input"],
           optionalBefore: ["physics.step"],
-          run: () => {
+          run: ({ dt }) => {
+            const adapter = world.services.get("physics") as PhysicsAdapter | undefined;
             for (const entity of world.query(CharacterMotor, Controller, RigidBody)) {
               const motor = entity.get(CharacterMotor);
               const controller = entity.get(Controller);
@@ -111,7 +112,21 @@ export function character(input = new InputManager()) {
               if (!motor || !controller || !body || controller.type !== "player") continue;
               const state = input.get(controller.input);
               const speed = state.sprint ? motor.sprintSpeed : motor.speed;
-              entity.set(RigidBody, { velocity: [state.move[0] * speed, state.jump && motor.grounded ? motor.jumpSpeed : body.velocity[1], state.move[1] * speed] });
+              const verticalSpeed = state.jump && motor.grounded
+                ? motor.jumpSpeed
+                : motor.verticalSpeed - motor.gravity * dt;
+              const velocity: [number, number, number] = [state.move[0] * speed, verticalSpeed, state.move[1] * speed];
+              if (adapter && supportsCharacterMovement(adapter) && body.type === "kinematic") {
+                const result = adapter.moveCharacter(world, entity.id, velocity.map((value) => value * dt) as [number, number, number]);
+                entity.set(CharacterMotor, {
+                  grounded: result.grounded,
+                  verticalSpeed: result.grounded && verticalSpeed < 0 ? 0 : verticalSpeed,
+                });
+                entity.set(RigidBody, { velocity });
+              } else {
+                entity.set(CharacterMotor, { verticalSpeed });
+                entity.set(RigidBody, { velocity });
+              }
             }
           },
         });

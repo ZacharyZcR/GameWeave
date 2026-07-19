@@ -11,6 +11,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
   "dependencies": {
+    "@dimforge/rapier3d-compat": "^0.19.3",
     "@gameweave/core": "^0.1.0",
     "@gameweave/three": "^0.1.0"
   }

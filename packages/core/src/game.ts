@@ -21,6 +21,7 @@ export class Game {
   readonly services = new Map<string, unknown>();
   #paused = false;
   #timeScale = 1;
+  #startedPlugins = new Set<string>();
 
   constructor(options: GameOptions = {}) {
     this.#options = options;
@@ -48,6 +49,11 @@ export class Game {
   async start(world?: World | string): Promise<void> {
     if (world) this.useWorld(world);
     this.#requireActiveWorld();
+    for (const plugin of this.#plugins.values()) {
+      if (this.#startedPlugins.has(plugin.id)) continue;
+      await plugin.start?.(this);
+      this.#startedPlugins.add(plugin.id);
+    }
     this.resume();
   }
 

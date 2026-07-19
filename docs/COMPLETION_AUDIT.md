@@ -13,7 +13,7 @@
 | Plugin、Service、Resource、Event、Scheduler | Core 对应模块 | Core integration tests 与 AI task 12 |
 | Three.js adapter 与资产所有权 | `packages/three` | sync、despawn、dispose packaging tests |
 | Transform 单向权威与 ManualTransform | `ThreeAdapter.sync` | invariant test 与 AI task 11 |
-| Physics adapter、RigidBody、Collider、raycast | `packages/physics` | integration 与 nearest raycast tests |
+| Physics adapter、RigidBody、Collider、raycast | `packages/physics` | Basic integration、真实 Rapier contact/event/raycast tests |
 | Character、Controller、Input、CameraRig | `packages/character` | movement 与 plugin-order tests；FPS build |
 | fixed-tick 输入录制与回放 | `InputManager`、`DebugSession` | debug test 与 AI task 08 |
 | Health、Damage、Weapon、Ammo、Hitscan | `packages/combat` | exact damage、hitscan tests |
@@ -44,7 +44,7 @@ git diff --check
 
 ## 已知边界
 
-- `BasicPhysicsAdapter` 是协议验证实现，不是生产级 solver；生产物理通过同一接口替换。
+- `BasicPhysicsAdapter` 仍只用于协议与确定性测试；正式浏览器游戏使用内置 `RapierPhysicsAdapter`。
 - 0.1.0 不包含可视化编辑器、多人后端、完整动画图、WebGPU 专用管线或 CLI，这些均列在设计非目标或未排期范围。
 - 两个浏览器 bundle 包含完整 Three.js，Vite 报告超过 500 kB 的非阻塞优化警告；gzip 约 167 kB。
 - 尚未执行 npm publish；“完成”指仓库内 0.1.0 实现与本地发布候选完成，不代表远端包已经发布。

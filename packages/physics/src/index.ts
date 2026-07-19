@@ -3,9 +3,10 @@ import { Transform } from "@gameweave/three";
 
 export const Collider = defineComponent("collider", {
   defaults: {
-    shape: "box" as "box" | "sphere",
+    shape: "box" as "box" | "sphere" | "capsule",
     size: [1, 1, 1] as [number, number, number],
     radius: 0.5,
+    halfHeight: 0.5,
     trigger: false,
     layer: 1,
     mask: 0xffff_ffff,
@@ -28,6 +29,8 @@ export interface RaycastHit {
 }
 
 export interface PhysicsAdapter {
+  initialize?(): void | Promise<void>;
+  dispose?(): void;
   step(world: World, dt: number): void;
   raycast(
     world: World,
@@ -36,6 +39,23 @@ export interface PhysicsAdapter {
     maxDistance: number,
     mask?: number,
   ): RaycastHit | undefined;
+}
+
+export interface CharacterMoveResult {
+  readonly movement: [number, number, number];
+  readonly grounded: boolean;
+}
+
+export interface CharacterPhysicsAdapter extends PhysicsAdapter {
+  moveCharacter(
+    world: World,
+    entity: EntityId,
+    movement: readonly [number, number, number],
+  ): CharacterMoveResult;
+}
+
+export function supportsCharacterMovement(adapter: PhysicsAdapter): adapter is CharacterPhysicsAdapter {
+  return "moveCharacter" in adapter && typeof adapter.moveCharacter === "function";
 }
 
 export class BasicPhysicsAdapter implements PhysicsAdapter {
@@ -110,6 +130,7 @@ export function physics(adapter: PhysicsAdapter = new BasicPhysicsAdapter()) {
     ...definePlugin({
       id: "gameweave.physics",
       install: (game) => game.provide("physics", adapter),
+      start: () => adapter.initialize?.(),
       setupWorld: (world) => {
         world.register(Transform).register(Collider).register(RigidBody);
         world.addSystem({
@@ -122,3 +143,5 @@ export function physics(adapter: PhysicsAdapter = new BasicPhysicsAdapter()) {
     adapter,
   };
 }
+
+export { RapierPhysicsAdapter, type RapierPhysicsOptions } from "./rapier.js";

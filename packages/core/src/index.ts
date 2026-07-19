@@ -1,4 +1,6 @@
 export { FixedClock } from "./clock.js";
+export { AssetManager, assets } from "./assets.js";
+export type { AssetLoader, AssetProgress, AssetProgressListener, AssetRequest } from "./assets.js";
 export type { FixedClockOptions } from "./clock.js";
 export { defineComponent } from "./definition.js";
 export type { DefineComponentOptions } from "./definition.js";

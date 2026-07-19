@@ -27,6 +27,25 @@ await game.start(world);
 
 `createGame()` 是主要入口；`Game` 类仍导出给需要继承类型或显式构造的工具。`pause()`、`resume()`、`setTimeScale()`、`step()` 和 `advance()` 管理时间。
 
+`game.start()` 会等待插件的异步初始化（例如 Rapier WASM），同一插件只初始化一次。
+
+### 1.1 资源加载
+
+```ts
+import { AssetManager, assets } from "@gameweave/core";
+
+const manager = new AssetManager()
+  .register("json", url => fetch(url).then(response => response.json()));
+game.use(assets(manager));
+
+manager.onProgress(({ loaded, total }) => updateLoadingBar(loaded / total));
+await manager.preload([
+  { id: "level-01", type: "json", url: "/levels/01.json" },
+]);
+```
+
+相同 ID、type、URL 的并发加载只执行一次；失败项会从缓存移除并允许重试。相同 ID 指向不同资源会直接报错，避免生成代码悄悄覆盖资源。
+
 ## 2. Spawn
 
 ```ts

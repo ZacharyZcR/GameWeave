@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AssetManager,
   createGame,
   defineComponent,
   definePlugin,
@@ -19,6 +20,39 @@ const Position = defineComponent("position", {
 
 const Velocity = defineComponent("velocity", {
   defaults: { x: 0, y: 0 },
+});
+
+describe("asset manager", () => {
+  it("deduplicates concurrent loads and reports preload progress", async () => {
+    let calls = 0;
+    const progress: number[] = [];
+    const assets = new AssetManager().register("text", async (url) => {
+      calls += 1;
+      return `loaded:${url}`;
+    });
+    assets.onProgress(({ loaded }) => progress.push(loaded));
+
+    const first = assets.load<string>({ id: "map", type: "text", url: "/map.json" });
+    const second = assets.load<string>({ id: "map", type: "text", url: "/map.json" });
+    await assets.preload([{ id: "map", type: "text", url: "/map.json" }]);
+
+    expect(await first).toBe("loaded:/map.json");
+    expect(await second).toBe("loaded:/map.json");
+    expect(assets.get("map")).toBe("loaded:/map.json");
+    expect(calls).toBe(1);
+    expect(progress).toEqual([0, 1]);
+  });
+
+  it("allows retrying a failed load", async () => {
+    let fail = true;
+    const assets = new AssetManager().register("data", async () => {
+      if (fail) throw new Error("offline");
+      return 42;
+    });
+    await expect(assets.load({ id: "level", type: "data", url: "/level" })).rejects.toThrow("offline");
+    fail = false;
+    await expect(assets.load({ id: "level", type: "data", url: "/level" })).resolves.toBe(42);
+  });
 });
 
 describe("components and entities", () => {
