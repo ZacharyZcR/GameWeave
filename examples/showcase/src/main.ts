@@ -31,6 +31,14 @@ interface ArenaConfig {
   readonly barriers: readonly [number, number, number][];
 }
 
+interface Tracer {
+  readonly object: Mesh;
+  readonly from: Vector3;
+  readonly to: Vector3;
+  readonly duration: number;
+  elapsed: number;
+}
+
 const element = <T extends HTMLElement>(id: string) => {
   const value = document.getElementById(id);
   if (!value) throw new Error(`Missing UI element: ${id}`);
@@ -100,7 +108,8 @@ async function start(): Promise<void> {
     .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
-  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, () => ({ yaw, pitch }));
+  const tracers: Tracer[] = [];
+  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, tracers, () => ({ yaw, pitch }));
   bindTelemetry(world, player);
 
   let collisionCount = 0;
@@ -120,6 +129,7 @@ async function start(): Promise<void> {
     entity.set(Transform, { visible: false });
     entity.remove(Collider);
   });
+  world.events.on("combat:fire", (event) => spawnTracer(world, rendererPlugin.adapter, tracers, event));
 
   canvas.addEventListener("pointerdown", () => {
     if (document.pointerLockElement !== canvas) void canvas.requestPointerLock();
@@ -197,25 +207,28 @@ function mesh(geometry: BufferGeometry, color: number, options: { cast?: boolean
 
 function createSoldier(): Object3D {
   const root = new Group();
+  const model = new Group();
+  root.add(model);
+  root.userData.model = model;
   const armor = new MeshStandardMaterial({ color: 0x984838, roughness: .72, metalness: .12 });
   const fabric = new MeshStandardMaterial({ color: 0x343833, roughness: .92 });
   const dark = new MeshStandardMaterial({ color: 0x171918, roughness: .58, metalness: .28 });
   const visor = new MeshStandardMaterial({ color: 0xd99b3f, roughness: .2, metalness: .72 });
-  part(root, new BoxGeometry(.78, .72, .34), armor, [0, .2, 0]);
-  part(root, new BoxGeometry(.9, .16, .42), armor, [0, .48, 0]);
-  part(root, new BoxGeometry(.56, .28, .38), dark, [0, -.22, 0]);
-  part(root, new SphereGeometry(.27, 16, 10), fabric, [0, .78, 0]);
-  part(root, new BoxGeometry(.43, .13, .29), visor, [0, .79, -.19]);
-  part(root, new BoxGeometry(.56, .1, .42), armor, [0, .98, 0]);
-  part(root, new BoxGeometry(.18, .62, .2), fabric, [-.51, .13, 0], [0, 0, -.1]);
-  part(root, new BoxGeometry(.18, .62, .2), fabric, [.51, .13, 0], [0, 0, .1]);
-  part(root, new BoxGeometry(.24, .16, .25), armor, [-.5, .4, 0]);
-  part(root, new BoxGeometry(.24, .16, .25), armor, [.5, .4, 0]);
-  part(root, new BoxGeometry(.24, .68, .26), fabric, [-.2, -.65, 0]);
-  part(root, new BoxGeometry(.24, .68, .26), fabric, [.2, -.65, 0]);
-  part(root, new BoxGeometry(.3, .16, .48), dark, [-.2, -1.0, -.08]);
-  part(root, new BoxGeometry(.3, .16, .48), dark, [.2, -1.0, -.08]);
-  const rifle = part(root, new BoxGeometry(.14, .16, .88), dark, [.3, .08, -.38], [.12, 0, -.28]);
+  part(model, new BoxGeometry(.78, .72, .34), armor, [0, .2, 0]);
+  part(model, new BoxGeometry(.9, .16, .42), armor, [0, .48, 0]);
+  part(model, new BoxGeometry(.56, .28, .38), dark, [0, -.22, 0]);
+  part(model, new SphereGeometry(.27, 16, 10), fabric, [0, .78, 0]);
+  part(model, new BoxGeometry(.43, .13, .29), visor, [0, .79, -.19]);
+  part(model, new BoxGeometry(.56, .1, .42), armor, [0, .98, 0]);
+  part(model, new BoxGeometry(.18, .62, .2), fabric, [-.51, .13, 0], [0, 0, -.1]);
+  part(model, new BoxGeometry(.18, .62, .2), fabric, [.51, .13, 0], [0, 0, .1]);
+  part(model, new BoxGeometry(.24, .16, .25), armor, [-.5, .4, 0]);
+  part(model, new BoxGeometry(.24, .16, .25), armor, [.5, .4, 0]);
+  part(model, new BoxGeometry(.24, .68, .26), fabric, [-.2, -.65, 0]);
+  part(model, new BoxGeometry(.24, .68, .26), fabric, [.2, -.65, 0]);
+  part(model, new BoxGeometry(.3, .16, .48), dark, [-.2, -1.0, -.08]);
+  part(model, new BoxGeometry(.3, .16, .48), dark, [.2, -1.0, -.08]);
+  const rifle = part(model, new BoxGeometry(.14, .16, .88), dark, [.3, .08, -.38], [.12, 0, -.28]);
   part(rifle, new CylinderGeometry(.025, .025, .46, 8), dark, [0, 0, -.62], [Math.PI / 2, 0, 0]);
   root.traverse((object) => { if (object instanceof Mesh) object.castShadow = true; });
   return root;
@@ -271,8 +284,8 @@ function buildArena(world: World, config: ArenaConfig): Entity {
     world.spawn({ id: `target-${index}` }).set(Transform, { position }).set(Renderable, { asset: "target" })
       .set(RigidBody, { type: "dynamic", lockRotations: true }).set(Collider, { shape: "capsule", halfHeight: .4, radius: .55 })
       .set(Health, { current: 40, max: 40 }).set(DamageInbox, {}).set(Faction, { id: "red" })
-      .set(Sensor, { sight: 32, hearing: 18 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 7 })
-      .set(StateMachine, {}).set(BotController, {}).set(Weapon, { id: "ai-rifle", damage: 8, cooldown: .75, range: 28 })
+      .set(Sensor, { sight: 36, hearing: 22 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 18 })
+      .set(StateMachine, {}).set(BotController, {}).set(Weapon, { id: "ai-rifle", damage: 2, cooldown: .7, range: 36 })
       .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 });
   }
   return world.spawn({ id: "player" }).set(Transform, { position: [0, 1.01, 5] })
@@ -287,6 +300,7 @@ function installDemoSystems(
   adapter: ReturnType<typeof three>["adapter"],
   player: Entity,
   viewModel: Group,
+  tracers: Tracer[],
   view: () => { readonly yaw: number; readonly pitch: number },
 ): void {
   world.addSystem({
@@ -311,6 +325,64 @@ function installDemoSystems(
       viewModel.rotation.set(recoil * .08, 0, Math.sin(time * 4) * .006 * moving);
     },
   });
+  world.addSystem({
+    name: "showcase.aiFacing", phase: "render", after: ["three.sync"], before: ["three.render"],
+    run: () => {
+      for (const bot of world.query(BotController, Targeting, Transform)) {
+        const targetId = bot.get(Targeting)?.target;
+        const botPosition = bot.get(Transform)?.position;
+        if (!targetId || !botPosition || !world.hasEntity(targetId)) continue;
+        const targetPosition = world.entity(targetId).get(Transform)?.position;
+        const object = adapter.object(bot.id);
+        const model = object?.userData.model as Object3D | undefined;
+        if (!targetPosition || !model) continue;
+        model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
+      }
+    },
+  });
+  world.addSystem({
+    name: "showcase.tracers", phase: "render", before: ["three.render"],
+    run: ({ dt }) => updateTracers(adapter, tracers, dt),
+  });
+}
+
+function spawnTracer(
+  world: World,
+  adapter: ReturnType<typeof three>["adapter"],
+  tracers: Tracer[],
+  event: unknown,
+): void {
+  const { shooter, target } = event as { shooter?: unknown; target?: unknown };
+  if (typeof shooter !== "string" || typeof target !== "string" || !world.hasEntity(shooter) || !world.hasEntity(target)) return;
+  const start = world.entity(shooter).get(Transform)?.position;
+  const end = world.entity(target).get(Transform)?.position;
+  if (!start || !end) return;
+  const from = new Vector3(start[0], start[1] + .42, start[2]);
+  const to = new Vector3(end[0], end[1] + .38, end[2]);
+  const object = new Mesh(
+    new SphereGeometry(.055, 8, 6),
+    new MeshStandardMaterial({ color: 0xffc45f, emissive: 0xff7a18, emissiveIntensity: 5, roughness: .2 }),
+  );
+  object.position.copy(from);
+  adapter.scene.add(object);
+  tracers.push({ object, from, to, duration: Math.max(.1, from.distanceTo(to) / 32), elapsed: 0 });
+}
+
+function updateTracers(adapter: ReturnType<typeof three>["adapter"], tracers: Tracer[], dt: number): void {
+  for (let index = tracers.length - 1; index >= 0; index -= 1) {
+    const tracer = tracers[index]!;
+    tracer.elapsed += dt;
+    const progress = Math.min(1, tracer.elapsed / tracer.duration);
+    tracer.object.position.lerpVectors(tracer.from, tracer.to, progress);
+    tracer.object.position.y += Math.sin(progress * Math.PI) * .035;
+    if (progress < 1) continue;
+    tracer.object.removeFromParent();
+    tracer.object.geometry.dispose();
+    const material = tracer.object.material;
+    if (!Array.isArray(material)) material.dispose();
+    tracers.splice(index, 1);
+  }
+  void adapter;
 }
 
 function bindTelemetry(world: World, player: Entity): void {
