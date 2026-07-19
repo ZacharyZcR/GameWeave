@@ -75,14 +75,17 @@ async function start(): Promise<void> {
   rendererPlugin.adapter.scene.add(rendererPlugin.adapter.camera);
 
   const keys = new Set<string>();
-  let yaw = 0, pitch = 0;
+  let yaw = 0, pitch = 0, aiming = false, thirdPerson = false;
   addEventListener("keydown", (event) => keys.add(event.code));
   addEventListener("keyup", (event) => keys.delete(event.code));
   addEventListener("mousemove", (event) => {
     if (document.pointerLockElement !== canvas) return;
-    yaw -= event.movementX * .0022;
-    pitch = MathUtils.clamp(pitch - event.movementY * .0022, -1.45, 1.45);
+    const sensitivity = aiming ? .001 : .0022;
+    yaw -= event.movementX * sensitivity;
+    pitch = MathUtils.clamp(pitch - event.movementY * sensitivity, -1.45, 1.45);
   });
+  addEventListener("mouseup", (event) => { if (event.button === 2) aiming = false; });
+  canvas.addEventListener("contextmenu", (event) => event.preventDefault());
   const input = new InputManager().register("range", () => ({
     move: viewRelativeMove(
       Number(keys.has("KeyD")) - Number(keys.has("KeyA")),
@@ -100,7 +103,8 @@ async function start(): Promise<void> {
     .use(character(input)).use(combat()).use(bots()).use(debug());
   const world = game.createWorld("range");
   const player = buildArena(world, config);
-  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, () => ({ yaw, pitch }));
+  const effects = createEffects(rendererPlugin.adapter);
+  installDemoSystems(world, rendererPlugin.adapter, player, viewModel, effects, () => ({ yaw, pitch, aiming, thirdPerson }));
   bindTelemetry(world, player);
 
   let collisionCount = 0;
@@ -125,18 +129,35 @@ async function start(): Promise<void> {
     if (typeof projectile === "string" && world.hasEntity(projectile)) world.entity(projectile).set(Renderable, { asset: "bullet" });
   });
   world.events.on("combat:projectileHit", (event) => {
-    const { owner, target } = event as { owner?: unknown; target?: unknown };
-    if (owner !== player.id || typeof target !== "string" || !world.hasEntity(target) || !world.entity(target).has(Health)) return;
+    const { owner, target, point, normal } = event as {
+      owner?: unknown; target?: unknown;
+      point?: [number, number, number]; normal?: [number, number, number];
+    };
+    const fleshy = typeof target === "string" && world.hasEntity(target) && world.entity(target).has(Health);
+    if (point && normal) effects.impact(point, normal, fleshy ? "flesh" : "dust");
+    if (fleshy && target !== player.id) effects.flash(target);
+    if (owner !== player.id || !fleshy) return;
     const marker = element("hit-marker");
     marker.classList.remove("active");
     void marker.offsetWidth;
     marker.classList.add("active");
     element("runtime-state").textContent = "PROJECTILE HIT";
   });
+  world.events.on("combat:damage", (event) => {
+    const { target, amount } = event as { target?: unknown; amount?: number };
+    if (target !== player.id) return;
+    effects.playerHit(amount ?? 0);
+    element("runtime-state").textContent = "TAKING FIRE";
+  });
 
-  canvas.addEventListener("pointerdown", () => {
-    if (document.pointerLockElement !== canvas) void canvas.requestPointerLock();
-    shootCrosshair(world, player, rendererPlugin.adapter, viewModel);
+  // mousedown 而不是 pointerdown：按住一个键后再按另一个键不会再触发 pointerdown
+  canvas.addEventListener("mousedown", (event) => {
+    if (document.pointerLockElement !== canvas) {
+      void canvas.requestPointerLock();
+      return;
+    }
+    if (event.button === 2) { aiming = true; return; }
+    if (event.button === 0) shootCrosshair(world, player, rendererPlugin.adapter, viewModel, thirdPerson);
   });
   document.addEventListener("pointerlockchange", () => {
     element("runtime-state").textContent = document.pointerLockElement === canvas ? "FPS CONTROL ACTIVE" : "CLICK TO ENGAGE";
@@ -144,6 +165,13 @@ async function start(): Promise<void> {
   addEventListener("keydown", ({ code, repeat }) => {
     if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = "RELOADING";
     if (code === "KeyT" && !repeat) resetRange(world, player);
+    if (code === "KeyV" && !repeat) {
+      thirdPerson = !thirdPerson;
+      if (thirdPerson) player.set(Renderable, { asset: "operator" });
+      else player.remove(Renderable);
+      viewModel.visible = !thirdPerson;
+      element("runtime-state").textContent = thirdPerson ? "THIRD PERSON" : "FIRST PERSON";
+    }
   });
   addEventListener("resize", () => resize(rendererPlugin.adapter, canvas));
   resize(rendererPlugin.adapter, canvas);
@@ -198,7 +226,8 @@ function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("ground", () => mesh(new BoxGeometry(40, .02, 40), 0x252925, { receive: true }));
   adapter.registerAsset("crate", () => mesh(new BoxGeometry(1, 1, 1), 0x68715f, { cast: true, receive: true }));
   adapter.registerAsset("barrier", () => mesh(new BoxGeometry(3.5, 2, .65), 0x3c423c, { cast: true, receive: true }));
-  adapter.registerAsset("target", createSoldier);
+  adapter.registerAsset("target", () => createSoldier());
+  adapter.registerAsset("operator", () => createSoldier({ armor: 0x35608a, visor: 0x8fb6dd }));
   adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
 }
 
@@ -210,15 +239,15 @@ function mesh(geometry: BufferGeometry, color: number, options: { cast?: boolean
   return object;
 }
 
-function createSoldier(): Object3D {
+function createSoldier(palette: { armor?: number; visor?: number } = {}): Object3D {
   const root = new Group();
   const model = new Group();
   root.add(model);
   root.userData.model = model;
-  const armor = new MeshStandardMaterial({ color: 0x984838, roughness: .72, metalness: .12 });
+  const armor = new MeshStandardMaterial({ color: palette.armor ?? 0x984838, roughness: .72, metalness: .12 });
   const fabric = new MeshStandardMaterial({ color: 0x343833, roughness: .92 });
   const dark = new MeshStandardMaterial({ color: 0x171918, roughness: .58, metalness: .28 });
-  const visor = new MeshStandardMaterial({ color: 0xd99b3f, roughness: .2, metalness: .72 });
+  const visor = new MeshStandardMaterial({ color: palette.visor ?? 0xd99b3f, roughness: .2, metalness: .72 });
   const torso = part(model, new BoxGeometry(.78, .72, .34), armor, [0, .2, 0]);
   part(model, new BoxGeometry(.9, .16, .42), armor, [0, .48, 0]);
   part(model, new BoxGeometry(.56, .28, .38), dark, [0, -.22, 0]);
@@ -233,8 +262,12 @@ function createSoldier(): Object3D {
   const rightLeg = part(model, new BoxGeometry(.24, .68, .26), fabric, [.2, -.65, 0]);
   part(model, new BoxGeometry(.3, .16, .48), dark, [-.2, -1.0, -.08]);
   part(model, new BoxGeometry(.3, .16, .48), dark, [.2, -1.0, -.08]);
-  const rifle = part(model, new BoxGeometry(.14, .16, .88), dark, [.3, .08, -.38], [.12, 0, -.28]);
-  part(rifle, new CylinderGeometry(.025, .025, .46, 8), dark, [0, 0, -.62], [Math.PI / 2, 0, 0]);
+  const rifle = part(model, new BoxGeometry(.12, .14, .62), dark, [.24, .14, -.4]);
+  part(rifle, new BoxGeometry(.05, .13, .16), dark, [0, -.13, .08]);
+  part(rifle, new BoxGeometry(.09, .09, .2), armor, [0, -.02, .32]);
+  part(rifle, new BoxGeometry(.05, .06, .1), dark, [0, .1, .18]);
+  part(rifle, new CylinderGeometry(.026, .026, .5, 8), dark, [0, .02, -.53], [Math.PI / 2, 0, 0]);
+  part(rifle, new BoxGeometry(.06, .07, .1), dark, [0, .02, -.76]);
   root.userData.bones = { torso, head, leftArm, rightArm, leftLeg, rightLeg, rifle };
   root.traverse((object) => { if (object instanceof Mesh) object.castShadow = true; });
   return root;
@@ -254,7 +287,10 @@ function createViewModel(): Group {
   part(root, new BoxGeometry(.18, .2, .78), gun, [0, .08, -.43]);
   part(root, new BoxGeometry(.12, .11, .44), accent, [0, .08, -.97]);
   part(root, new CylinderGeometry(.032, .032, .55, 10), gun, [0, .08, -1.42], [Math.PI / 2, 0, 0]);
-  part(root, new BoxGeometry(.12, .1, .16), gun, [0, .23, -.48]);
+  part(root, new BoxGeometry(.1, .04, .14), gun, [0, .17, -.48]);
+  part(root, new BoxGeometry(.03, .08, .05), gun, [-.05, .23, -.48]);
+  part(root, new BoxGeometry(.03, .08, .05), gun, [.05, .23, -.48]);
+  part(root, new BoxGeometry(.016, .07, .03), accent, [0, .215, -1.12]);
   part(root, new BoxGeometry(.08, .16, .22), gun, [0, -.1, -.22], [-.22, 0, 0]);
   part(root, new BoxGeometry(.1, .2, .3), gun, [0, -.12, -.53], [.18, 0, 0]);
   const muzzle = new Object3D();
@@ -297,6 +333,7 @@ function buildArena(world: World, config: ArenaConfig): Entity {
       .set(Sensor, { sight: 36, hearing: 22 }).set(Targeting, {}).set(NavigationAgent, { speed: 2.4, stoppingDistance: 18 })
       .set(StateMachine, {}).set(BotController, {}).set(Weapon, {
         id: "ai-rifle", damage: 2, cooldown: .7, range: 36, delivery: "projectile", projectileSpeed: 24,
+        muzzle: [.24, .16, 1.21],
       })
       .set(Ammo, { magazine: 999, reserve: 0, capacity: 999 }).set(Ragdoll, {});
   }
@@ -308,22 +345,111 @@ function buildArena(world: World, config: ArenaConfig): Entity {
     .set(Ammo, { magazine: 12, reserve: 48, capacity: 12 });
 }
 
+interface ImpactParticle {
+  readonly mesh: Mesh;
+  readonly velocity: Vector3;
+  life: number;
+  readonly ttl: number;
+}
+
+function createEffects(adapter: ReturnType<typeof three>["adapter"]) {
+  const vignette = element<HTMLElement>("damage-vignette");
+  const geometry = new BoxGeometry(.055, .055, .055);
+  const materials = {
+    flesh: new MeshStandardMaterial({ color: 0xe0523a, emissive: 0x99200f, emissiveIntensity: 1.3, roughness: .55 }),
+    dust: new MeshStandardMaterial({ color: 0x99a08f, roughness: .95 }),
+  };
+  const particles: ImpactParticle[] = [];
+  const flashes = new Map<string, { materials: readonly MeshStandardMaterial[]; strength: number }>();
+  let shake = 0;
+
+  return {
+    get shake() { return shake; },
+    impact(point: readonly [number, number, number], normal: readonly [number, number, number], kind: "flesh" | "dust"): void {
+      for (let index = 0; index < 9; index += 1) {
+        const mesh = new Mesh(geometry, materials[kind]);
+        mesh.position.set(...point);
+        mesh.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+        const velocity = new Vector3(...normal).multiplyScalar(2.2 + Math.random() * 2.6)
+          .add(new Vector3(Math.random() - .5, Math.random() - .2, Math.random() - .5).multiplyScalar(3.2));
+        adapter.scene.add(mesh);
+        particles.push({ mesh, velocity, life: 0, ttl: .28 + Math.random() * .22 });
+      }
+    },
+    flash(entity: string): void {
+      const existing = flashes.get(entity);
+      if (existing) { existing.strength = 1; return; }
+      const object = adapter.object(entity);
+      if (!object) return;
+      const found = new Set<MeshStandardMaterial>();
+      object.traverse((child) => {
+        if (child instanceof Mesh && child.material instanceof MeshStandardMaterial) found.add(child.material);
+      });
+      flashes.set(entity, { materials: [...found], strength: 1 });
+    },
+    playerHit(amount: number): void {
+      shake = Math.min(1, shake + .35 + amount * .012);
+      vignette.classList.remove("active");
+      void vignette.offsetWidth;
+      vignette.classList.add("active");
+    },
+    update(dt: number): void {
+      shake = Math.max(0, shake - dt * 2.4);
+      for (let index = particles.length - 1; index >= 0; index -= 1) {
+        const particle = particles[index]!;
+        particle.life += dt;
+        if (particle.life >= particle.ttl) {
+          adapter.scene.remove(particle.mesh);
+          particles.splice(index, 1);
+          continue;
+        }
+        particle.velocity.y -= 12 * dt;
+        particle.mesh.position.addScaledVector(particle.velocity, dt);
+        particle.mesh.scale.setScalar(1 - particle.life / particle.ttl);
+      }
+      for (const [entity, flash] of flashes) {
+        flash.strength -= dt * 5.5;
+        const intensity = Math.max(0, flash.strength) * 1.8;
+        for (const material of flash.materials) {
+          material.emissive.setHex(0xff3a1f);
+          material.emissiveIntensity = intensity;
+        }
+        if (flash.strength <= 0) flashes.delete(entity);
+      }
+    },
+  };
+}
+
 function installDemoSystems(
   world: World,
   adapter: ReturnType<typeof three>["adapter"],
   player: Entity,
   viewModel: Group,
-  view: () => { readonly yaw: number; readonly pitch: number },
+  effects: ReturnType<typeof createEffects>,
+  view: () => { readonly yaw: number; readonly pitch: number; readonly aiming: boolean; readonly thirdPerson: boolean },
 ): void {
+  world.addSystem({
+    name: "showcase.effects", phase: "render", optionalAfter: ["three.sync"], before: ["three.render"],
+    run: ({ dt }) => effects.update(dt),
+  });
   world.addSystem({
     name: "showcase.camera", phase: "render", optionalAfter: ["three.sync"], before: ["three.render"],
     run: ({ dt }) => {
       const transform = player.get(Transform);
       if (!transform) return;
       const [x, y, z] = transform.position;
-      const { yaw, pitch } = view();
-      adapter.camera.position.set(x, y + .72, z);
+      const { yaw, pitch, aiming, thirdPerson } = view();
+      const targetFov = aiming ? (thirdPerson ? 38 : 28) : 52;
+      adapter.camera.fov += (targetFov - adapter.camera.fov) * Math.min(1, dt * 14);
+      adapter.camera.updateProjectionMatrix();
       adapter.camera.rotation.set(pitch, yaw, 0, "YXZ");
+      adapter.camera.position.set(x, y + .72, z);
+      if (thirdPerson) {
+        const back = new Vector3(0, 0, 1).applyEuler(adapter.camera.rotation);
+        adapter.camera.position.addScaledVector(back, 3.4);
+        const model = adapter.object(player.id)?.userData.model as Object3D | undefined;
+        if (model) model.rotation.y = yaw;
+      }
       const velocity = player.get(RigidBody)?.velocity ?? [0, 0, 0];
       const moving = Math.min(1, Math.hypot(velocity[0], velocity[2]) / 5);
       const time = performance.now() * .001;
@@ -331,13 +457,23 @@ function installDemoSystems(
       const reloading = player.get(Reloading), weapon = player.get(Weapon);
       const reloadProgress = reloading && weapon ? 1 - reloading.remaining / weapon.reloadTime : 0;
       const reloadArc = reloading ? Math.sin(reloadProgress * Math.PI) : 0;
+      const aim = Number(viewModel.userData.aim ?? 0);
+      const aimBlend = aim + ((aiming && !thirdPerson ? 1 : 0) - aim) * Math.min(1, dt * 12);
+      const sway = moving * (1 - aimBlend * .75);
       viewModel.userData.recoil = recoil;
+      viewModel.userData.aim = aimBlend;
       viewModel.position.set(
-        .38 + Math.sin(time * 8) * .012 * moving,
-        -.38 + Math.abs(Math.cos(time * 8)) * .012 * moving - recoil * .035 - reloadArc * .34,
-        -.72 + recoil * .11,
+        MathUtils.lerp(.38, 0, aimBlend) + Math.sin(time * 8) * .012 * sway,
+        MathUtils.lerp(-.38, -.25, aimBlend) + Math.abs(Math.cos(time * 8)) * .012 * sway - recoil * .035 - reloadArc * .34,
+        MathUtils.lerp(-.72, -.5, aimBlend) + recoil * .11,
       );
-      viewModel.rotation.set(recoil * .08 + reloadArc * .28, 0, Math.sin(time * 4) * .006 * moving + reloadArc * .55);
+      viewModel.rotation.set(recoil * .08 + reloadArc * .28, 0, Math.sin(time * 4) * .006 * sway + reloadArc * .55);
+      const trauma = effects.shake ** 2;
+      if (trauma > 0) {
+        adapter.camera.rotation.x += Math.sin(time * 91) * trauma * .05;
+        adapter.camera.rotation.y += Math.cos(time * 83) * trauma * .05;
+        adapter.camera.rotation.z = Math.sin(time * 71) * trauma * .06;
+      }
     },
   });
   world.addSystem({
@@ -353,6 +489,31 @@ function installDemoSystems(
         const model = object?.userData.model as Object3D | undefined;
         if (!targetPosition || !model) continue;
         model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
+      }
+    },
+  });
+  world.addSystem({
+    // 在 ragdolls 之后运行：非 ragdoll 状态下 ragdolls 会把骨骼归零，跑步摆动要覆盖它
+    name: "showcase.locomotion", phase: "render", after: ["showcase.ragdolls"], before: ["three.render"],
+    run: ({ dt }) => {
+      for (const entity of world.query(Transform, RigidBody)) {
+        const object = adapter.object(entity.id);
+        const bones = object?.userData.bones as Record<string, Object3D> | undefined;
+        const model = object?.userData.model as Object3D | undefined;
+        if (!object || !bones || !model || entity.get(Ragdoll)?.active) continue;
+        const velocity = entity.get(RigidBody)?.velocity ?? [0, 0, 0];
+        const speed = Math.hypot(velocity[0], velocity[2]);
+        const blend = Number(object.userData.runBlend ?? 0);
+        const nextBlend = blend + (Math.min(1, speed / 2.2) - blend) * Math.min(1, dt * 10);
+        const phase = Number(object.userData.runPhase ?? 0) + (nextBlend > .02 ? dt * (4 + speed * 2.6) : 0);
+        object.userData.runBlend = nextBlend;
+        object.userData.runPhase = phase;
+        const swing = Math.sin(phase) * .62 * nextBlend;
+        bones.leftLeg!.rotation.x = swing;
+        bones.rightLeg!.rotation.x = -swing;
+        bones.leftArm!.rotation.x = -swing * .55;
+        bones.rightArm!.rotation.x = swing * .25;
+        model.position.y = Math.abs(Math.sin(phase)) * .05 * nextBlend;
       }
     },
   });
@@ -401,12 +562,19 @@ function shootCrosshair(
   player: Entity,
   renderer: ReturnType<typeof three>["adapter"],
   viewModel: Group,
+  thirdPerson: boolean,
 ): void {
   const directionVector = renderer.camera.getWorldDirection(new Vector3());
   const direction: [number, number, number] = [directionVector.x, directionVector.y, directionVector.z];
-  renderer.camera.updateMatrixWorld(true);
-  const muzzle = viewModel.userData.muzzle as Object3D | undefined;
-  const originVector = muzzle?.getWorldPosition(new Vector3()) ?? renderer.camera.position.clone().addScaledVector(directionVector, .7);
+  const bodyTransform = player.get(Transform);
+  let originVector: Vector3;
+  if (thirdPerson && bodyTransform) {
+    originVector = new Vector3(...bodyTransform.position).add(new Vector3(0, .72, 0)).addScaledVector(directionVector, .8);
+  } else {
+    renderer.camera.updateMatrixWorld(true);
+    const muzzle = viewModel.userData.muzzle as Object3D | undefined;
+    originVector = muzzle?.getWorldPosition(new Vector3()) ?? renderer.camera.position.clone().addScaledVector(directionVector, .7);
+  }
   const origin: [number, number, number] = [originVector.x, originVector.y, originVector.z];
   const projectile = fireDirection(player, world, origin, direction);
   const transform = player.get(Transform);

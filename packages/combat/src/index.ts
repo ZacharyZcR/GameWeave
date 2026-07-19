@@ -23,6 +23,7 @@ export const Weapon = defineComponent("weapon", { defaults: {
   id: "", fireMode: "semi" as "semi" | "automatic", damage: 10, damageType: "generic",
   cooldown: 0.2, cooldownRemaining: 0, reloadTime: 2, range: 300, spread: 0,
   delivery: "hitscan" as "hitscan" | "projectile", projectileSpeed: 32,
+  muzzle: [0, .4, .7] as [number, number, number],
 } });
 export const Inventory = defineComponent("inventory", { defaults: { items: [] as string[], equipped: "" } });
 export const Projectile = defineComponent("projectile", { defaults: {
@@ -99,8 +100,7 @@ export function fire(shooter: Entity, target: Entity, world: World): boolean {
     const from = shooter.get(Transform)?.position, to = target.get(Transform)?.position;
     if (!from || !to) return false;
     const direction = normalize(to.map((value, index) => value - from[index]!) as [number, number, number]);
-    const position = from.map((value, index) => value + direction[index]! * .7) as [number, number, number];
-    position[1] += .4;
+    const position = muzzlePosition(from, direction, weapon.muzzle);
     projectileEntity = spawnProjectile(world, {
       owner: shooter.id, position, direction, speed: weapon.projectileSpeed,
       damage: weapon.damage, damageType: weapon.damageType, lifetime: weapon.range / weapon.projectileSpeed,
@@ -278,4 +278,19 @@ function normalize(direction: [number, number, number]): [number, number, number
   const length = Math.hypot(...direction);
   if (length === 0) throw new Error("Projectile direction must not be zero");
   return direction.map((value) => value / length) as [number, number, number];
+}
+
+// muzzle 是 [right, up, forward] 局部偏移，forward 取实体到目标的方向
+function muzzlePosition(
+  from: readonly [number, number, number],
+  direction: readonly [number, number, number],
+  muzzle: readonly [number, number, number],
+): [number, number, number] {
+  const [right, up, forward] = muzzle;
+  const flat = Math.hypot(direction[0], direction[2]) || 1;
+  return [
+    from[0] + (direction[2] / flat) * right + direction[0] * forward,
+    from[1] + up + direction[1] * forward,
+    from[2] - (direction[0] / flat) * right + direction[2] * forward,
+  ];
 }
