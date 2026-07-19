@@ -1,7 +1,7 @@
 import { CharacterMotor, Controller, InputManager, Ragdoll, activateRagdoll, character } from "@gameweave/character";
 import { BotController, NavigationAgent, Sensor, StateMachine, Targeting, bots, emitNoise } from "@gameweave/bots";
 import { Ammo, DamageInbox, Dead, Faction, Health, Reloading, Weapon, combat, fireDirection, reload, throwGrenade } from "@gameweave/combat";
-import { AssetManager, assets, createGame, type Entity, type World } from "@gameweave/core";
+import { AssetManager, assets, createGame, defineComponent, type Entity, type World } from "@gameweave/core";
 import { debug } from "@gameweave/debug";
 import { Collider, RapierPhysicsAdapter, RigidBody, physics } from "@gameweave/physics";
 import { Renderable, Transform, three } from "@gameweave/three";
@@ -31,6 +31,8 @@ interface ArenaConfig {
   readonly crates: readonly [number, number, number][];
   readonly barriers: readonly [number, number, number][];
 }
+
+const Debris = defineComponent("showcaseDebris", { defaults: { ttl: 3 } });
 
 const element = <T extends HTMLElement>(id: string) => {
   const value = document.getElementById(id);
@@ -127,10 +129,25 @@ async function start(): Promise<void> {
       activateRagdoll(entity, { duration: 1.25, impulse: [0, 2.2, 1.8] });
       return;
     }
-    // 可破坏物：碎裂后移除
+    // 可破坏物：炸成物理碎块，不是凭空消失
     const position = entity.get(Transform)?.position;
-    if (position) effects.burst(position, "dust", 22);
+    if (position) {
+      effects.burst(position, "dust", 14);
+      spawnPropDebris(world, target, position);
+    }
     entity.despawn();
+  });
+  world.events.on("combat:damage", (event) => {
+    const { target } = event as { target?: unknown };
+    if (typeof target !== "string" || target === player.id || !world.hasEntity(target)) return;
+    const entity = world.entity(target);
+    if (entity.has(BotController)) return;
+    const health = entity.get(Health);
+    const position = entity.get(Transform)?.position;
+    if (!health || !position) return;
+    // 受损分级：随血量焦黑 + 剥落碎屑
+    charProp(rendererPlugin.adapter, target, health.current / health.max);
+    effects.burst(position, "dust", 5);
   });
   world.events.on("combat:explosion", (event) => {
     const { position } = event as { position?: [number, number, number] };
@@ -184,7 +201,7 @@ async function start(): Promise<void> {
   const updateGrenades = () => element("grenades").textContent = String(grenades);
   addEventListener("keydown", ({ code, repeat }) => {
     if (code === "KeyR" && !repeat && reload(player, world)) element("runtime-state").textContent = "RELOADING";
-    if (code === "KeyT" && !repeat) { resetRange(world, player, config); grenades = 3; updateGrenades(); }
+    if (code === "KeyT" && !repeat) { resetRange(world, player, config, rendererPlugin.adapter); grenades = 3; updateGrenades(); }
     if (code === "KeyG" && !repeat && grenades > 0 && !player.has(Dead)) {
       const directionVector = rendererPlugin.adapter.camera.getWorldDirection(new Vector3());
       const bodyTransform = player.get(Transform);
@@ -264,6 +281,8 @@ function registerVisuals(adapter: ReturnType<typeof three>["adapter"]): void {
   adapter.registerAsset("target", () => createSoldier());
   adapter.registerAsset("operator", () => createSoldier({ armor: 0x35608a, visor: 0x8fb6dd }));
   adapter.registerAsset("bullet", () => mesh(new SphereGeometry(.065, 8, 6), 0xffb347, { metalness: .15 }));
+  adapter.registerAsset("crate-shard", () => mesh(new BoxGeometry(.34, .34, .34), 0x565e4d, { cast: true }));
+  adapter.registerAsset("barrier-shard", () => mesh(new BoxGeometry(.55, .4, .28), 0x31372f, { cast: true }));
   adapter.registerAsset("grenade", () => {
     const body = mesh(new SphereGeometry(.12, 10, 8), 0x3a4a35, { cast: true, metalness: .3 });
     body.add(mesh(new BoxGeometry(.06, .08, .06), 0x8a8f85, { metalness: .5 }));
@@ -354,6 +373,36 @@ function part<T extends Object3D>(
   object.rotation.set(...rotation);
   parent.add(object);
   return object;
+}
+
+function charProp(adapter: ReturnType<typeof three>["adapter"], id: string, ratio: number): void {
+  adapter.object(id)?.traverse((child) => {
+    if (!(child instanceof Mesh) || !(child.material instanceof MeshStandardMaterial)) return;
+    const material = child.material;
+    material.userData.baseColor ??= material.color.getHex();
+    material.color.setHex(material.userData.baseColor as number).lerp(new Color(0x191713), 1 - ratio);
+  });
+}
+
+function spawnPropDebris(world: World, id: string, position: readonly [number, number, number]): void {
+  const crate = id.startsWith("crate");
+  const asset = crate ? "crate-shard" : "barrier-shard";
+  const size: [number, number, number] = crate ? [.34, .34, .34] : [.55, .4, .28];
+  const count = crate ? 8 : 12;
+  const spread = crate ? .45 : 1.5;
+  for (let index = 0; index < count; index += 1) {
+    const offset = [
+      (Math.random() - .5) * spread * 2,
+      (Math.random() - .3) * .7,
+      (Math.random() - .5) * (crate ? spread * 2 : .5),
+    ] as const;
+    world.spawn()
+      .set(Transform, { position: [position[0] + offset[0], position[1] + offset[1], position[2] + offset[2]] })
+      .set(Renderable, { asset })
+      .set(RigidBody, { velocity: [offset[0] * 5, 2.5 + Math.random() * 3, offset[2] * 5] })
+      .set(Collider, { size: [...size] })
+      .set(Debris, { ttl: 2.4 + Math.random() * 1.6 });
+  }
 }
 
 function spawnBarrier(world: World, index: number, position: readonly [number, number, number]): void {
@@ -576,6 +625,22 @@ function installDemoSystems(
     },
   });
   world.addSystem({
+    name: "showcase.debris", phase: "fixedUpdate",
+    run: ({ dt }) => {
+      for (const entity of world.query(Debris)) {
+        const debris = entity.get(Debris);
+        if (!debris) continue;
+        const ttl = debris.ttl - dt;
+        if (ttl <= 0) { entity.despawn(); continue; }
+        entity.set(Debris, { ttl });
+        if (ttl < .6) {
+          const scale = ttl / .6;
+          entity.set(Transform, { scale: [scale, scale, scale] });
+        }
+      }
+    },
+  });
+  world.addSystem({
     // 在 ragdolls 之后运行：非 ragdoll 状态下 ragdolls 会把骨骼归零，跑步摆动要覆盖它
     name: "showcase.locomotion", phase: "render", after: ["showcase.ragdolls"], before: ["three.render"],
     run: ({ dt }) => {
@@ -667,7 +732,7 @@ function shootCrosshair(
   element("runtime-state").textContent = "ROUND FIRED";
 }
 
-function resetRange(world: World, player: Entity, config: ArenaConfig): void {
+function resetRange(world: World, player: Entity, config: ArenaConfig, adapter: ReturnType<typeof three>["adapter"]): void {
   for (const target of world.query(Health, BotController)) {
     target.set(Health, { current: 40 });
     target.set(Transform, { visible: true });
@@ -677,13 +742,18 @@ function resetRange(world: World, player: Entity, config: ArenaConfig): void {
     target.set(RigidBody, { lockRotations: true, velocity: [0, 0, 0] });
     target.set(BotController, { enabled: true });
   }
+  for (const entity of world.query(Debris)) entity.despawn();
   for (const [index, position] of config.barriers.entries()) {
-    if (world.hasEntity(`barrier-${index}`)) world.entity(`barrier-${index}`).set(Health, { current: 120 }).set(Transform, { position: [...position] });
-    else spawnBarrier(world, index, position);
+    if (world.hasEntity(`barrier-${index}`)) {
+      world.entity(`barrier-${index}`).set(Health, { current: 120 }).set(Transform, { position: [...position] });
+      charProp(adapter, `barrier-${index}`, 1);
+    } else spawnBarrier(world, index, position);
   }
   for (const [index, position] of config.crates.entries()) {
-    if (world.hasEntity(`crate-${index}`)) world.entity(`crate-${index}`).set(Health, { current: 40 }).set(Transform, { position: [...position] }).set(RigidBody, { velocity: [0, 0, 0] });
-    else spawnCrate(world, index, position);
+    if (world.hasEntity(`crate-${index}`)) {
+      world.entity(`crate-${index}`).set(Health, { current: 40 }).set(Transform, { position: [...position] }).set(RigidBody, { velocity: [0, 0, 0] });
+      charProp(adapter, `crate-${index}`, 1);
+    } else spawnCrate(world, index, position);
   }
   player.set(Ammo, { magazine: 12, reserve: 48 });
   player.set(Health, { current: 100 });
