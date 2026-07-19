@@ -346,11 +346,11 @@ function createSoldier(palette: { armor?: number; visor?: number } = {}): Object
   return root;
 }
 
-// 真实枪模的姿态常量：观感不对时只调这四个
-const RIFLE_SCALE = 1.5;
-const RIFLE_YAW = Math.PI;          // 模型原生朝向不是 -z 时调（π 掉头，±π/2 转 90 度）
-const RIFLE_POSITION = [0, -.02, -.45] as const;
-const RIFLE_MUZZLE_Z = -1.35;
+// 真实枪模的姿态常量（模型实测长 8.85 单位、枪口朝 -z）：观感不对时只调这四个
+const RIFLE_SCALE = .12;
+const RIFLE_YAW = 0;
+const RIFLE_POSITION = [0, -.14, -.35] as const;
+const RIFLE_MUZZLE_Z = -1.15;
 
 function createViewModel(rifle: Object3D): Group {
   const root = new Group();
@@ -653,9 +653,8 @@ function installDemoSystems(
         const object = adapter.object(bot.id);
         const model = innerModel(object);
         if (!targetPosition || !model) continue;
-        // 手搓模型朝 -z，GLB soldier 朝 +z，差半圈
-        const flip = object?.userData.model ? 0 : Math.PI;
-        model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]) + flip;
+        // 手搓模型和 three.js Soldier 都原生朝 -z，公式共用
+        model.rotation.y = Math.atan2(botPosition[0] - targetPosition[0], botPosition[2] - targetPosition[2]);
       }
     },
   });
