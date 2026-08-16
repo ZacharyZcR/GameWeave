@@ -24,9 +24,9 @@ interface NativeBody {
 
 export class RapierPhysicsAdapter implements CharacterPhysicsAdapter {
   readonly #options: RapierPhysicsOptions;
-  #native?: RAPIER.World;
-  #events?: RAPIER.EventQueue;
-  #controller?: RAPIER.KinematicCharacterController;
+  #native?: RAPIER.World | undefined;
+  #events?: RAPIER.EventQueue | undefined;
+  #controller?: RAPIER.KinematicCharacterController | undefined;
   #bodies = new Map<EntityId, NativeBody>();
   #entities = new Map<number, EntityId>();
 
@@ -152,7 +152,8 @@ export class RapierPhysicsAdapter implements CharacterPhysicsAdapter {
           : RAPIER.RigidBodyDesc.kinematicPositionBased();
         desc.setTranslation(...transform.position).setRotation({
           x: transform.quaternion[0], y: transform.quaternion[1], z: transform.quaternion[2], w: transform.quaternion[3],
-        }).setLinvel(...bodyData.velocity).setGravityScale(bodyData.gravityScale).lockRotations(bodyData.lockRotations);
+        }).setLinvel(...bodyData.velocity).setGravityScale(bodyData.gravityScale);
+        if (bodyData.lockRotations) desc.lockRotations();
         const body = native.createRigidBody(desc);
         const colliderDesc = colliderData.shape === "sphere"
           ? RAPIER.ColliderDesc.ball(colliderData.radius)
